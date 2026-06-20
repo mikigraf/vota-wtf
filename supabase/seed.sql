@@ -1,0 +1,2 @@
+-- Seed data is inserted by migrations so production and local resets stay identical.
+-- This file exists because supabase/config.toml enables a seed target for `supabase db reset`.
