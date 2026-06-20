@@ -14,7 +14,7 @@
 Build `vota.wtf` as one focused Next.js product:
 
 ```txt
-500 participants scan a QR code -> create nickname + role + photo -> receive Credits -> predict across multiple organizer-created cards -> stage shows the live room signal -> admin locks/resolves -> users get Oracle Score and receipts.
+500 participants scan a QR code -> create nickname + role + photo -> receive MegaBucks -> predict across multiple organizer-created cards -> stage shows the live room signal -> admin locks/resolves -> users get Oracle Score and receipts.
 ```
 
 This version removes sponsor-runtime complexity. The only required external integration for the demo is **Mollie test mode** for checkout proof. The admin console is not Base44 anymore; it is a native `/admin` route inside the same Next.js app.
@@ -44,7 +44,7 @@ Custom prediction amounts
 Participant photo/camera onboarding
 Roles: Builder / Sponsor / Investor / Other
 Whale Guard
-People Signal vs Credit Signal
+People Signal vs MegaBuck Signal
 2% virtual provision tracking
 Oracle Score leaderboard
 Stage screen
@@ -68,11 +68,11 @@ vota.wtf turns MEGATHON into a live market of belief: builders, sponsors, invest
 QR join flow
 Nickname + role + photo/avatar
 Anonymous participant session
-Starter Credits
+Starter MegaBucks
 Prediction feed with multiple cards
-Custom Credit amount per prediction
+Custom MegaBuck amount per prediction
 Whale Guard amount validation
-Mollie test-mode +100 Credits checkout
+Mollie test-mode +100 MBucks checkout
 Admin login with password
 Admin create/edit/open/lock/resolve/void predictions
 Stage screen with live signals
@@ -254,7 +254,7 @@ Scan QR
 -> choose nickname
 -> choose role: Builder / Sponsor / Investor / Other
 -> add photo: take photo, upload, or skip
--> receive starter Credits
+-> receive starter MegaBucks
 -> first prediction card appears immediately
 ```
 
@@ -310,7 +310,7 @@ Resolution rule
 Status: open / locked / resolved / voided
 Outcome cards with image/icon
 People Signal
-Credit Signal
+MegaBuck Signal
 Your current prediction
 Allowed amount
 ```
@@ -335,7 +335,7 @@ Use playful but safer words:
 
 ```txt
 Predict
-Commit Credits
+Commit MegaBucks
 Back your take
 Boost conviction
 Lock my take
@@ -354,7 +354,7 @@ real money
 odds payout
 ```
 
-Internally the database can use `stake_amount`, but the UI should say Credits/Prediction/Conviction.
+Internally the database can use `stake_amount`, but the UI should say MegaBucks/Prediction/Conviction.
 
 ---
 
@@ -366,7 +366,7 @@ Recommended behavior:
 
 ```txt
 One active outcome per participant per market.
-User may add more Credits to the same outcome before lock.
+User may add more MegaBucks to the same outcome before lock.
 User may switch outcome before lock; existing signal moves to the new outcome.
 Admin can disable switching per market if needed.
 No actions after lock.
@@ -378,7 +378,7 @@ No actions after lock.
 Quick buttons: 100 / 250 / 500
 Custom input
 Max button based on Whale Guard
-Low balance CTA: “Try test checkout +100 Credits”
+Low balance CTA: “Try test checkout +100 MBucks”
 ```
 
 ### First action rule
@@ -386,7 +386,7 @@ Low balance CTA: “Try test checkout +100 Credits”
 During fair launch:
 
 ```txt
-First prediction on a market = exactly 100 Credits.
+First prediction on a market = exactly 100 MBucks.
 ```
 
 After fair launch:
@@ -401,15 +401,15 @@ First prediction can be 100 up to allowed max.
 
 This is the cleanest structure for MEGATHON.
 
-### Credits
+### MegaBucks
 
 ```txt
-Credits are spendable event currency.
-Credits are not money.
-Credits cannot be redeemed.
-Credits cannot be transferred.
-Credits do not cash out.
-Credits committed to predictions are consumed/locked for signal.
+MegaBucks are spendable event currency.
+MegaBucks are not money.
+MegaBucks cannot be redeemed.
+MegaBucks cannot be transferred.
+MegaBucks do not cash out.
+MegaBucks committed to predictions are consumed/locked for signal.
 ```
 
 ### Oracle Score
@@ -423,7 +423,7 @@ Oracle Score cannot be spent or redeemed.
 
 ### Why this matters
 
-If users can buy Credits, the leaderboard must not simply rank balances or total spend. Otherwise the winner is the person who clicked the most test checkouts.
+If users can buy MegaBucks, the leaderboard must not simply rank balances or total spend. Otherwise the winner is the person who clicked the most test checkouts.
 
 The leaderboard should rank:
 
@@ -438,8 +438,8 @@ prediction efficiency
 Not:
 
 ```txt
-raw Credits purchased
-raw Credits spent
+raw MegaBucks purchased
+raw MegaBucks spent
 wallet balance
 ```
 
@@ -460,7 +460,7 @@ For MEGATHON, this is not real revenue. It is business-model instrumentation.
 Admin dashboard should show:
 
 ```txt
-Total Credits committed
+Total MegaBucks committed
 Virtual 2% provision
 Mollie test checkouts completed
 Projected live supporter revenue
@@ -471,7 +471,7 @@ Scan-to-first-prediction conversion
 Pitch line:
 
 ```txt
-The app already tracks marketplace economics: checkout conversion, Credits issued, Credits committed, and a 2% virtual provision on every prediction.
+The app already tracks marketplace economics: checkout conversion, MegaBucks issued, MegaBucks committed, and a 2% virtual provision on every prediction.
 ```
 
 ---
@@ -484,14 +484,14 @@ Use Mollie only in test mode.
 
 ```txt
 Try supporter checkout
-Test EUR 1 -> +100 Credits
+Test EUR 1 -> +100 MBucks
 No real charge in MEGATHON test mode. No payouts. No cash-out.
 ```
 
 ### Flow
 
 ```txt
-User clicks +100 Credits
+User clicks +100 MBucks
 -> Next.js server creates purchase row: pending
 -> server creates Mollie test payment
 -> user redirects to Mollie test checkout
@@ -504,8 +504,8 @@ User clicks +100 Credits
 ### Rules
 
 ```txt
-Do not credit from frontend redirect alone.
-Credit only after server-side status verification/webhook.
+Do not issue MegaBucks from frontend redirect alone.
+Issue MegaBucks only after server-side status verification/webhook.
 Use idempotency on purchase_id / mollie_payment_id.
 Show “test checkout completed,” not “revenue collected.”
 ```
@@ -514,7 +514,7 @@ Show “test checkout completed,” not “revenue collected.”
 
 ## 12. Whale Guard
 
-Whale Guard prevents one person from buying or receiving too many Credits and flooding the signal.
+Whale Guard prevents one person from buying or receiving too many MegaBucks and flooding the signal.
 
 ### Layer 1 - People Signal is primary
 
@@ -522,23 +522,23 @@ Always calculate two signals:
 
 ```txt
 People Signal = percentage of participants who picked each outcome.
-Credit Signal = percentage of signal Credits committed to each outcome.
+MegaBuck Signal = percentage of signal MegaBucks committed to each outcome.
 ```
 
 Default stage display:
 
 ```txt
 Primary: People Signal
-Secondary: Credit Signal
+Secondary: MegaBuck Signal
 ```
 
-This means one person with many Credits cannot fully hijack the room signal.
+This means one person with many MegaBucks cannot fully hijack the room signal.
 
 ### Layer 2 - fair launch
 
 ```txt
-First prediction per market = exactly 100 Credits.
-Fair launch ends after 25 unique participants, 5,000 signal Credits, or admin override.
+First prediction per market = exactly 100 MBucks.
+Fair launch ends after 25 unique participants, 5,000 signal MegaBucks, or admin override.
 ```
 
 ### Layer 3 - step-up ladder
@@ -572,13 +572,13 @@ Max 5% of market signal pool per house agent.
 ### Layer 6 - price-impact cap
 
 ```txt
-No single action can move Credit Signal by more than 5 percentage points.
+No single action can move MegaBuck Signal by more than 5 percentage points.
 ```
 
 User message:
 
 ```txt
-This market cannot absorb that much yet. Max allowed now: 150 Credits.
+This market cannot absorb that much yet. Max allowed now: 150 MBucks.
 ```
 
 ### Final allowed amount
@@ -669,7 +669,7 @@ Real probability calibration
 
 ## 14. Scoring
 
-No Credit payouts. Correctness earns Oracle Score only.
+No MegaBuck payouts. Correctness earns Oracle Score only.
 
 ### Score formula
 
@@ -882,7 +882,7 @@ Event status
 Total participants
 Active markets
 Predictions submitted
-Credits committed
+MegaBucks committed
 Virtual 2% provision
 Mollie test checkouts
 Stage mode
@@ -937,7 +937,7 @@ Pending test purchases
 Completed test purchases
 Credited purchases
 Failed/canceled purchases
-Credits issued from test checkout
+MegaBucks issued from test checkout
 Projected EUR value
 ```
 
@@ -1046,13 +1046,13 @@ No payouts. No cash-out. Just reputation.
 ```txt
 Who wins MEGATHON?
 
-Team Orbit   People 34%   Credits 41%
-Team Nova    People 28%   Credits 22%
-Team Atlas   People 19%   Credits 17%
-Other        People 19%   Credits 20%
+Team Orbit   People 34%   MegaBuck Signal 41%
+Team Nova    People 28%   MegaBuck Signal 22%
+Team Atlas   People 19%   MegaBuck Signal 17%
+Other        People 19%   MegaBuck Signal 20%
 
 312 people in
-28,490 Credits committed
+28,490 MBucks committed
 ```
 
 ### Role battle mode
@@ -1102,7 +1102,7 @@ Screenshot of stage screen
 ```txt
 Friday night: “We are turning MEGATHON into a live market of belief.”
 Saturday morning: “QR join + prediction cards shipped.”
-Saturday afternoon: “Mollie test checkout credits now work.”
+Saturday afternoon: “Mollie test checkout MegaBucks now work.”
 Saturday night: “Whale Guard: preventing one rich degen from hijacking the room.”
 Sunday: “Humans vs agents at the final ceremony.”
 ```
@@ -1148,11 +1148,11 @@ Organizer creates 3-5 prediction cards.
 Stage screen shows QR code.
 Participant scans QR.
 Participant enters nickname, role, and photo.
-Participant receives starter Credits.
+Participant receives starter MegaBucks.
 Participant predicts on multiple cards with custom amounts.
 Whale Guard caps oversized actions.
-Stage updates People Signal and Credit Signal.
-Participant can complete Mollie test checkout and receive +100 Credits.
+Stage updates People Signal and MegaBuck Signal.
+Participant can complete Mollie test checkout and receive +100 MBucks.
 Admin locks a market.
 Admin resolves a market.
 Leaderboard updates by Oracle Score.
@@ -1168,11 +1168,11 @@ Admin sees virtual 2% provision and test checkout metrics.
 1. Show stage screen with QR.
 2. Scan QR on phone.
 3. Create profile: nickname, Builder, take/upload photo.
-4. Receive starter Credits.
-5. Predict “Who wins MEGATHON?” with 100 Credits.
+4. Receive starter MegaBucks.
+5. Predict “Who wins MEGATHON?” with 100 MBucks.
 6. Show stage signal move.
 7. Try to commit too much; Whale Guard limits it.
-8. Click test checkout: +100 Credits via Mollie test mode.
+8. Click test checkout: +100 MBucks via Mollie test mode.
 9. Admin opens /admin.
 10. Admin creates/opens/locks/resolves prediction.
 11. Stage shows resolution and confetti.
