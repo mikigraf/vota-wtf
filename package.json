@@ -1,0 +1,41 @@
+{
+  "name": "vota-wtf",
+  "version": "7.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=22 <23",
+    "npm": ">=10"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test -r ./tests/register-ts.cjs tests/*.test.ts",
+    "readiness": "node scripts/check-readiness.mjs",
+    "verify": "npm run lint && npm run test && npm run build && npm run readiness",
+    "verify:deploy": "npm run lint && npm run test && npm run build && REQUIRE_READINESS_URL=1 npm run readiness",
+    "supabase:start": "supabase start",
+    "supabase:reset": "supabase db reset",
+    "supabase:push": "supabase db push",
+    "env:local:supabase": "node scripts/write-local-supabase-env.mjs",
+    "dev:local:supabase": "npm run env:local:supabase && next dev",
+    "verify:local:supabase": "npm run env:local:supabase && VOTA_DATA_BACKEND=supabase npm run verify"
+  },
+  "dependencies": {
+    "next": "15.1.7",
+    "react": "19.0.0",
+    "react-dom": "19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.13.10",
+    "@types/react": "19.0.0",
+    "@types/react-dom": "19.0.0",
+    "autoprefixer": "10.4.21",
+    "postcss": "8.4.31",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.9.2"
+  },
+  "packageManager": "npm@10.9.2"
+}

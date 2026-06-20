@@ -1,0 +1,14 @@
+.DS_Store
+node_modules
+.next
+.next-stale-*
+out
+.env
+.env*.local
+.data
+coverage
+tsconfig.tsbuildinfo
+public/uploads/avatars/*
+!public/uploads/avatars/.gitkeep
+public/uploads/market-images/*
+!public/uploads/market-images/.gitkeep
