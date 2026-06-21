@@ -59,6 +59,18 @@ function initialName(value?: string) {
   return value;
 }
 
+function postJoinPath(nextPath: string | undefined, eventSlug: string) {
+  const eventHome = `/e/${eventSlug}`;
+  const safeNext = safeParticipantNextPath(nextPath);
+  if (!safeNext) return eventHome;
+  try {
+    const url = new URL(safeNext, "https://vota.local");
+    return url.pathname === eventHome ? `${url.pathname}${url.search}` : eventHome;
+  } catch {
+    return eventHome;
+  }
+}
+
 export function JoinForm({
   eventSlug,
   initialNickname,
@@ -99,7 +111,7 @@ export function JoinForm({
       });
       const initData = await initResponse.json().catch(() => ({}));
       if (!initResponse.ok) throw new Error(initData.error || "Could not start this event session.");
-      const recoveredNext = safeParticipantNextPath(nextPath) || (initData.nextMarketId ? `/m/${initData.nextMarketId}` : `/e/${eventSlug}`);
+      const recoveredNext = postJoinPath(nextPath, eventSlug);
       if (initData.profileComplete) {
         router.push(recoveredNext);
         router.refresh();
@@ -117,8 +129,7 @@ export function JoinForm({
         return;
       }
       if (!response.ok) throw new Error(data.error || "Could not join.");
-      const safeNext = safeParticipantNextPath(nextPath);
-      router.push(safeNext || (data.nextMarketId ? `/m/${data.nextMarketId}` : `/e/${eventSlug}`));
+      router.push(postJoinPath(nextPath, eventSlug));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not join.");

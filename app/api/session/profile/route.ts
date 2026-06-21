@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { getParticipantSessionIdFromRequest } from "@/lib/auth";
 import { generatedAvatarDataUrl, isGeneratedAvatarUrl } from "@/lib/avatar";
-import { findNextOpenMarketData, getSessionParticipantData, updateParticipantProfileData } from "@/lib/data";
+import { getSessionParticipantData, updateParticipantProfileData } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
 import { hasCompletedProfile } from "@/lib/participants";
 import { publicParticipant } from "@/lib/store";
@@ -50,6 +50,5 @@ export async function PATCH(request: NextRequest) {
   } catch (error) {
     return badRequest(error instanceof Error ? error.message : "Could not join.");
   }
-  const nextMarket = await findNextOpenMarketData(session.participant.eventId);
-  return json({ participant: publicParticipant(participant), nextMarketId: nextMarket?.id });
+  return json({ participant: publicParticipant(participant) });
 }

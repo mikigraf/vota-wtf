@@ -4,6 +4,7 @@ from reportlab.graphics import renderPDF, renderSVG
 from reportlab.graphics.barcode import qr
 from reportlab.graphics.shapes import Drawing
 from reportlab.lib.colors import HexColor
+from reportlab.lib.utils import ImageReader
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -11,6 +12,7 @@ from reportlab.pdfgen import canvas
 OUT = "output/pdf/vota-finals-pitch.pdf"
 OUT_V2 = "output/pdf/vota-finals-pitch-v2.pdf"
 QR_SVG = "output/pdf/vota-join-megathon-finals-qr.svg"
+TEAM_PHOTO = "docs/assets/megathon-team.jpeg"
 JOIN_URL = "https://www.vota.wtf/join/megathon-finals"
 W, H = 1280, 720
 
@@ -56,6 +58,26 @@ def rect_top(c, x, y, w, h, fill, stroke=None, radius=0, stroke_width=1):
         c.roundRect(x, top(y + h), w, h, radius, fill=1, stroke=1 if stroke else 0)
     else:
         c.rect(x, top(y + h), w, h, fill=1, stroke=1 if stroke else 0)
+
+
+def image_top_cover(c, path, x, y, w, h, stroke=None, radius=0):
+    image = ImageReader(path)
+    image_w, image_h = image.getSize()
+    scale = max(w / image_w, h / image_h)
+    draw_w = image_w * scale
+    draw_h = image_h * scale
+    draw_x = x + (w - draw_w) / 2
+    draw_y = top(y + h) + (h - draw_h) / 2
+    clip = c.beginPath()
+    clip.rect(x, top(y + h), w, h)
+    c.saveState()
+    c.clipPath(clip, stroke=0, fill=0)
+    c.drawImage(image, draw_x, draw_y, draw_w, draw_h, mask="auto")
+    c.restoreState()
+    if stroke:
+        c.setStrokeColor(stroke)
+        c.setLineWidth(1)
+        c.roundRect(x, top(y + h), w, h, radius, fill=0, stroke=1)
 
 
 def draw_grid(c):
@@ -482,13 +504,7 @@ def slide5_v2(c):
         text(c, 124, y0 + 27, item, 16, INK, "ArialBold")
 
     rect_top(c, 622, 118, 560, 298, HexColor("#F5F4F0"), HexColor("#D8D5CC"), 10)
-    rect_top(c, 646, 142, 512, 250, HexColor("#ECEAE3"), HexColor("#D8D5CC"), 8)
-    c.setStrokeColor(HexColor("#C8C4BA"))
-    c.setLineWidth(2)
-    c.line(646, top(392), 1158, top(142))
-    c.line(646, top(142), 1158, top(392))
-    text(c, 816, 254, "TEAM PHOTO", 28, INK, "ArialBlack")
-    text(c, 768, 288, "horizontal image placeholder", 15, MUTED, "ArialBold")
+    image_top_cover(c, TEAM_PHOTO, 646, 142, 512, 250, HexColor("#D8D5CC"), 8)
 
     rect_top(c, 622, 448, 286, 166, INK, radius=10)
     text(c, 648, 492, "MEGATHON FINALS", 13, HexColor("#8C8C88"), "ArialBold")

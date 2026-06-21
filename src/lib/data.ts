@@ -1389,6 +1389,12 @@ export async function findNextOpenMarketData(eventId: string) {
   return markets.find((market) => market.id === event?.featuredMarketId) || markets[0];
 }
 
+function eventHomeNextPath(eventSlug: string, path: string) {
+  const url = new URL(path, "https://vota.local");
+  const checkout = url.searchParams.get("checkout");
+  return checkout ? `/e/${eventSlug}?checkout=${encodeURIComponent(checkout)}` : `/e/${eventSlug}`;
+}
+
 export async function scopedParticipantNextPathData(value: unknown, eventSlug: string) {
   const path = safeParticipantNextPath(value);
   if (!path) return "";
@@ -1400,7 +1406,10 @@ export async function scopedParticipantNextPathData(value: unknown, eventSlug: s
   }
 
   const eventPathMatch = pathname.match(/^\/(?:e|j|join)\/([^/]+)$/);
-  if (eventPathMatch) return decodeURIComponent(eventPathMatch[1] || "") === eventSlug ? path : "";
+  if (eventPathMatch) {
+    if (decodeURIComponent(eventPathMatch[1] || "") !== eventSlug) return "";
+    return pathname.startsWith("/e/") ? path : eventHomeNextPath(eventSlug, path);
+  }
 
   const marketMatch = pathname.match(/^\/m\/([^/]+)$/);
   if (!marketMatch) return "";
@@ -1411,7 +1420,7 @@ export async function scopedParticipantNextPathData(value: unknown, eventSlug: s
     const store = await readStore();
     const event = store.events.find((item) => item.slug === eventSlug);
     const market = store.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
-    return event && market?.eventId === event.id ? path : "";
+    return event && market?.eventId === event.id ? eventHomeNextPath(eventSlug, path) : "";
   }
 
   if (!isUuid(marketId)) return "";
@@ -1422,7 +1431,7 @@ export async function scopedParticipantNextPathData(value: unknown, eventSlug: s
     "markets",
     `select=id,event_id,status&id=eq.${encodeURIComponent(marketId)}&event_id=eq.${encodeURIComponent(eventId)}&status=not.in.(draft,voided)&limit=1`
   );
-  return marketRows[0] ? path : "";
+  return marketRows[0] ? eventHomeNextPath(eventSlug, path) : "";
 }
 
 export async function scopedCheckoutReturnPathData(value: unknown, eventSlug: string) {

@@ -41,8 +41,9 @@ export default async function MarketPage({
   let event = store.events.find((item) => item.id === market.eventId);
   let session = getSessionParticipant(store, sessionId);
   if (session?.participant.eventId !== market.eventId || !hasCompletedProfile(session?.participant)) {
-    const next = checkout ? `/m/${market.id}?checkout=${encodeURIComponent(checkout)}` : `/m/${market.id}`;
-    redirect(`/join/${event?.slug || DEFAULT_EVENT_SLUG}?next=${encodeURIComponent(next)}`);
+    const eventSlug = event?.slug || DEFAULT_EVENT_SLUG;
+    const next = checkout ? `/e/${eventSlug}?checkout=${encodeURIComponent(checkout)}` : `/e/${eventSlug}`;
+    redirect(`/join/${eventSlug}?next=${encodeURIComponent(next)}`);
   }
   let checkoutMessage = "";
   if (checkout) {

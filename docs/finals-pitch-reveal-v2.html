@@ -643,30 +643,15 @@
         background: var(--mint);
       }
 
-      .team-photo-placeholder {
-        display: grid;
+      .team-photo {
+        display: block;
+        width: 100%;
         min-height: 300px;
-        place-items: center;
+        object-fit: cover;
+        object-position: 50% 43%;
         border-radius: 10px;
         border: 1px solid rgba(11, 11, 12, 0.15);
-        background:
-          linear-gradient(152deg, transparent calc(50% - 1px), rgba(11, 11, 12, 0.18) 50%, transparent calc(50% + 1px)),
-          linear-gradient(28deg, transparent calc(50% - 1px), rgba(11, 11, 12, 0.18) 50%, transparent calc(50% + 1px)),
-          #eceae3;
-      }
-
-      .team-photo-placeholder strong {
-        display: block;
-        font-size: 32px;
-        font-weight: 950;
-      }
-
-      .team-photo-placeholder span {
-        display: block;
-        margin-top: 8px;
-        color: var(--muted);
-        font-size: 15px;
-        font-weight: 800;
+        background: #eceae3;
       }
 
       .join-bottom {
@@ -1000,12 +985,7 @@
               </div>
             </div>
             <div>
-              <div class="team-photo-placeholder">
-                <div>
-                  <strong>TEAM PHOTO</strong>
-                  <span>horizontal image placeholder</span>
-                </div>
-              </div>
+              <img class="team-photo" src="assets/megathon-team.jpeg" alt="Megathon team preparing the live demo" />
               <div class="join-bottom">
                 <div class="join-card">
                   <small>Megathon Finals</small>

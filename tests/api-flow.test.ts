@@ -116,7 +116,7 @@ test("actual route handlers support the Sunday participant checkout loop", async
     assert.equal(profileJson.participant.nickname, "demo_druid");
     assert.equal("email" in profileJson.participant, false);
     assert.equal("role" in profileJson.participant, false);
-    assert.equal(profileJson.nextMarketId, SEED_IDS.markets.winner);
+    assert.equal("nextMarketId" in profileJson, false);
 
     const recoveredInit = await initSessionPost(
       request("http://localhost/api/session/init", {
@@ -129,7 +129,7 @@ test("actual route handlers support the Sunday participant checkout loop", async
     assert.equal(recoveredInit.status, 200);
     const recoveredJson = await recoveredInit.json();
     assert.equal(recoveredJson.profileComplete, true);
-    assert.equal(recoveredJson.nextMarketId, SEED_IDS.markets.winner);
+    assert.equal("nextMarketId" in recoveredJson, false);
     assert.equal(recoveredJson.participant.nickname, "demo_druid");
 
     const editedGeneratedAvatarProfile = await profilePatch(

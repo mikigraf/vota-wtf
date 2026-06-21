@@ -59,7 +59,7 @@ Events, livestreams, fantasy leagues, agent leagues, and public forecasting room
 
 **On slide**
 
-- Horizontal team image placeholder
+- Team photo from the Megathon room
 - QR code to `https://www.vota.wtf/join/megathon-finals`
 - Enter Megathon Finals
 - Make one prediction

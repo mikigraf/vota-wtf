@@ -10,7 +10,7 @@ import {
   participantCookieOptions
 } from "@/lib/auth";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
-import { findNextOpenMarketData, initParticipantSessionData } from "@/lib/data";
+import { initParticipantSessionData } from "@/lib/data";
 import { badRequest, clientIpFromRequest, json, readJsonObject } from "@/lib/http";
 import { hasCompletedProfile } from "@/lib/participants";
 import { publicParticipant } from "@/lib/store";
@@ -24,13 +24,11 @@ export async function POST(request: NextRequest) {
   try {
     const result = await initParticipantSessionData(existingId, eventSlug, guardKeyHash);
     const profileComplete = hasCompletedProfile(result.participant);
-    const nextMarket = profileComplete ? await findNextOpenMarketData(result.participant.eventId) : undefined;
     const response = json({
       sessionId: result.session.id,
       participant: publicParticipant(result.participant),
       wallet: result.wallet,
-      profileComplete,
-      nextMarketId: nextMarket?.id
+      profileComplete
     });
     response.cookies.set(joinGuardCookieName(), guard, joinGuardCookieOptions());
     response.cookies.set(participantCookieName(), result.session.id, participantCookieOptions());

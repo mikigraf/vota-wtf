@@ -1040,7 +1040,7 @@ test("join next paths are scoped to the selected event before entering the arena
     transitionMarket(store, voidedTestingMarket.id, "void");
     writeStore(store);
 
-    assert.equal(await scopedParticipantNextPathData(`/m/${testingMarket.id}?from=qr`, "testingmiki"), `/m/${testingMarket.id}?from=qr`);
+    assert.equal(await scopedParticipantNextPathData(`/m/${testingMarket.id}?from=qr`, "testingmiki"), "/e/testingmiki");
     assert.equal(await scopedParticipantNextPathData("/e/testingmiki?checkout=abc", "testingmiki"), "/e/testingmiki?checkout=abc");
     assert.equal(await scopedParticipantNextPathData(`/m/${megathonMarket.id}`, "testingmiki"), "");
     assert.equal(await scopedParticipantNextPathData(`/m/${voidedTestingMarket.id}`, "testingmiki"), "");

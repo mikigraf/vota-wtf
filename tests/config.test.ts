@@ -132,7 +132,7 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(readme, /READINESS_URL=https:\/\/vota\.wtf npm run verify:deploy/);
   assert.match(readme, /LOAD_MARKET_ID=<open-disposable-market-id>/);
   assert.match(readme, /docs\/live-event-readiness-plan\.md/);
-  assert.match(readme, /049_seed_megathon_finals_event\.sql/);
+  assert.match(readme, /051_delete_market_readiness_contract\.sql/);
   assert.match(readme, /\/join\/megathon-finals/);
   assert.match(readme, /^NEXT_PUBLIC_EVENT_SLUG=megathon$/m);
   assert.match(workflow, /node-version: 22/);
@@ -144,9 +144,9 @@ test("local Supabase runbook and scripts are wired", () => {
 test("live-event readiness plan captures the manual gates automation cannot prove", () => {
   const plan = fs.readFileSync("docs/live-event-readiness-plan.md", "utf8");
 
-  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/049_seed_megathon_finals_event\.sql` applied/);
+  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/051_delete_market_readiness_contract\.sql` applied/);
   assert.match(plan, /reopen `\/j\/megathon-finals`/);
-  assert.match(plan, /Apply migrations through `049`/);
+  assert.match(plan, /Apply migrations through `051`/);
   assert.match(plan, /Run the projector flow: `\/stage\/megathon-finals`/);
   assert.match(plan, /npm run smoke:json/);
   assert.match(plan, /local server smoke gate/);
@@ -432,6 +432,7 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     participantUniqueEmailIndex: true,
     poolSettlementRpc: true,
     voidMarketRpc: true,
+    deleteMarketRpc: true,
     transitionMarketRpc: true,
     marketSignalsRpc: true,
     predictionLockHelperRpc: true,
@@ -482,7 +483,7 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     deployEnv,
     "megathon-2026",
     async () => new Response(JSON.stringify({ status: "paid" }), { status: 200 }),
-    { ...contract, contractVersion: "049_seed_megathon_finals_event" }
+    { ...contract, contractVersion: "051_delete_market_readiness_contract" }
   );
   assert.equal(currentContract.ready, true);
 });

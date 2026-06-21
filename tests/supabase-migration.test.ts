@@ -51,6 +51,7 @@ const platformProvisionMigration = fs.readFileSync("supabase/migrations/047_plat
 const hotPathIndexMigration = fs.readFileSync("supabase/migrations/048_hot_path_indexes.sql", "utf8");
 const megathonFinalsSeedMigration = fs.readFileSync("supabase/migrations/049_seed_megathon_finals_event.sql", "utf8");
 const adminMarketDeleteMigration = fs.readFileSync("supabase/migrations/050_admin_market_delete_tx.sql", "utf8");
+const deleteMarketReadinessMigration = fs.readFileSync("supabase/migrations/051_delete_market_readiness_contract.sql", "utf8");
 const constantsLayer = fs.readFileSync("src/lib/constants.ts", "utf8");
 const storeLayer = fs.readFileSync("src/lib/store.ts", "utf8");
 const dataLayer = fs.readFileSync("src/lib/data.ts", "utf8");
@@ -219,6 +220,8 @@ test("Supabase public grants stay limited to public aggregate state", () => {
   assert.match(publicMarketPage, /market = refreshedMarket/);
   assert.match(publicMarketPage, /hasCompletedProfile\(session\?\.participant\)/);
   assert.match(publicMarketPage, /session\?\.participant\.eventId !== market\.eventId/);
+  assert.match(publicMarketPage, /const eventSlug = event\?\.slug \|\| DEFAULT_EVENT_SLUG/);
+  assert.match(publicMarketPage, /const next = checkout \? `\/e\/\$\{eventSlug\}\?checkout=/);
   assert.doesNotMatch(publicMarketPage, /readDataStore|readPublicEventStoreData/);
   assert.match(stagePage, /readPublicStateData\(slug\)/);
   assert.match(stagePage, /readLeaderboardGroupsData\(slug\)/);
@@ -245,11 +248,11 @@ test("Supabase public grants stay limited to public aggregate state", () => {
   assert.doesNotMatch(predictRoute, /readDataStore/);
   assert.match(profileRoute, /getSessionParticipantData\(getParticipantSessionIdFromRequest\(request\)\)/);
   assert.match(profileRoute, /Enter a stage name before joining/);
-  assert.match(profileRoute, /findNextOpenMarketData\(session\.participant\.eventId\)/);
+  assert.doesNotMatch(profileRoute, /findNextOpenMarketData|nextMarketId/);
   assert.doesNotMatch(profileRoute, /readDataStore|getSessionFromRequestData/);
   assert.match(initRoute, /try \{/);
   assert.match(initRoute, /profileComplete/);
-  assert.match(initRoute, /findNextOpenMarketData\(result\.participant\.eventId\)/);
+  assert.doesNotMatch(initRoute, /findNextOpenMarketData|nextMarketId/);
   assert.match(initRoute, /Could not start this event session\./);
   assert.match(publicStateRoute, /readPublicStateData\(slug\)/);
   assert.match(publicStateRoute, /badRequest\("Event not found\.", 404\)/);
@@ -789,6 +792,11 @@ test("Supabase admin market create and edit flows are transactional", () => {
   assert.match(adminMarketCrudMigration, /grant execute on function create_market_tx[\s\S]+to service_role/);
   assert.match(adminMarketCrudMigration, /grant execute on function update_market_tx[\s\S]+to service_role/);
   assert.match(adminMarketDeleteMigration, /grant execute on function delete_market_tx\(uuid, text\) to service_role/);
+  assert.match(deleteMarketReadinessMigration, /alter function readiness_contract_tx\(\) rename to readiness_contract_tx_v050/);
+  assert.match(deleteMarketReadinessMigration, /to_regprocedure\('delete_market_tx\(uuid,text\)'\) is not null/);
+  assert.match(deleteMarketReadinessMigration, /'contractVersion', '051_delete_market_readiness_contract'/);
+  assert.match(deleteMarketReadinessMigration, /'deleteMarketRpc', v_delete_market_rpc/);
+  assert.match(deleteMarketReadinessMigration, /grant execute on function readiness_contract_tx\(\) to service_role/);
   assert.match(blindLaunchClearMigration, /p_clear_blind_launch_ended_at boolean default false/);
   assert.match(blindLaunchClearMigration, /when p_clear_blind_launch_ended_at then null/);
   assert.match(blindLaunchClearMigration, /grant execute on function update_market_tx\(uuid, timestamptz[\s\S]+boolean, text\) to service_role/);
@@ -851,8 +859,8 @@ test("Mollie payment attach and verification avoid duplicate or stale credits", 
   assert.match(dataLayer, /safeCheckoutReturnPath\(value, eventSlug\)/);
   assert.match(dataLayer, /export async function scopedParticipantNextPathData\(value: unknown, eventSlug: string\)/);
   assert.match(dataLayer, /safeParticipantNextPath\(value\)/);
-  assert.match(dataLayer, /decodeURIComponent\(eventPathMatch\[1\] \|\| ""\) === eventSlug/);
-  assert.match(dataLayer, /market\?\.eventId === event\.id \? path : ""/);
+  assert.match(dataLayer, /decodeURIComponent\(eventPathMatch\[1\] \|\| ""\) !== eventSlug/);
+  assert.match(dataLayer, /market\?\.eventId === event\.id \? eventHomeNextPath\(eventSlug, path\) : ""/);
   assert.match(dataLayer, /const directEventMatch = pathname\.match/);
   assert.match(dataLayer, /\(\?:e\|j\|join\)/);
   assert.match(dataLayer, /market\?\.eventId === event\.id/);
