@@ -49,6 +49,7 @@ const participantUniqueEmailMigration = fs.readFileSync("supabase/migrations/045
 const privateAggregatesMigration = fs.readFileSync("supabase/migrations/046_private_market_aggregates.sql", "utf8");
 const platformProvisionMigration = fs.readFileSync("supabase/migrations/047_platform_provision_account.sql", "utf8");
 const hotPathIndexMigration = fs.readFileSync("supabase/migrations/048_hot_path_indexes.sql", "utf8");
+const megathonFinalsSeedMigration = fs.readFileSync("supabase/migrations/049_seed_megathon_finals_event.sql", "utf8");
 const constantsLayer = fs.readFileSync("src/lib/constants.ts", "utf8");
 const storeLayer = fs.readFileSync("src/lib/store.ts", "utf8");
 const dataLayer = fs.readFileSync("src/lib/data.ts", "utf8");
@@ -58,6 +59,7 @@ const marketUpdateRoute = fs.readFileSync("app/api/admin/markets/[id]/route.ts",
 const marketCreateRoute = fs.readFileSync("app/api/admin/markets/route.ts", "utf8");
 const newMarketPage = fs.readFileSync("app/admin/markets/new/page.tsx", "utf8");
 const rootPage = fs.readFileSync("app/page.tsx", "utf8");
+const landingPage = fs.readFileSync("app/landing/page.tsx", "utf8");
 const marketPage = fs.readFileSync("app/admin/markets/[id]/page.tsx", "utf8");
 const eventPage = fs.readFileSync("app/e/[eventSlug]/page.tsx", "utf8");
 const joinPage = fs.readFileSync("app/join/[eventSlug]/page.tsx", "utf8");
@@ -324,11 +326,17 @@ test("Supabase prediction tables enforce participant and market event integrity"
   );
 });
 
-test("root route starts the live participant journey at join instead of browsing markets", () => {
-  assert.match(rootPage, /export const dynamic = "force-dynamic"/);
+test("root route renders the public landing with one Megathon-Finals entry CTA", () => {
+  assert.match(rootPage, /export \{ default, metadata \} from "\.\/landing\/page"/);
+  assert.match(landingPage, /FINAL_EVENT_SLUG/);
+  assert.match(landingPage, /Enter Megathon-Finals/);
+  assert.match(landingPage, /href=\{`\/join\/\$\{FINAL_EVENT_SLUG\}`\}/);
+  assert.doesNotMatch(landingPage, /\/admin/);
+  assert.doesNotMatch(landingPage, /href=\{`\/stage/);
+  assert.doesNotMatch(landingPage, /href=\{`\/e\//);
   assert.doesNotMatch(rootPage, /readDataStore/);
   assert.doesNotMatch(rootPage, /item\.status === "live"/);
-  assert.match(rootPage, /redirect\(`\/join\/\$\{DEFAULT_EVENT_SLUG\}`\)/);
+  assert.doesNotMatch(rootPage, /redirect\(`\/join\/\$\{DEFAULT_EVENT_SLUG\}`\)/);
   assert.match(dataLayer, /VOTA_ENABLE_PRODUCTION_AUTO_SEED/);
   assert.match(dataLayer, /NODE_ENV === "production"/);
 });
@@ -1149,14 +1157,26 @@ test("admin control surfaces avoid GET writes and expose proof/control affordanc
   assert.match(roomMarketSeedMigration, /alter function readiness_contract_tx\(\) rename to readiness_contract_tx_v040/);
   assert.match(roomMarketSeedMigration, /'contractVersion', '041_seed_megathon_testingmiki_markets'/);
   assert.match(roomMarketSeedMigration, /'megathonTestingmikiMarketsSeeded', v_rooms_seeded/);
+  assert.match(megathonFinalsSeedMigration, /'megathon-finals', 'Megathon-Finals'/);
+  assert.match(megathonFinalsSeedMigration, /Who wins Megathon-Finals\?/);
+  assert.match(megathonFinalsSeedMigration, /Will the final demo run cleanly\?/);
+  assert.match(megathonFinalsSeedMigration, /Which finalist gets the biggest crowd reaction\?/);
+  assert.match(megathonFinalsSeedMigration, /featured_market_id = '00000000-0000-4000-8000-000000001201'/);
+  assert.match(megathonFinalsSeedMigration, /where slug = 'megathon-finals'[\s\S]+featured_market_id is null/);
+  assert.match(megathonFinalsSeedMigration, /alter function readiness_contract_tx\(\) rename to readiness_contract_tx_v048/);
+  assert.match(megathonFinalsSeedMigration, /'contractVersion', '049_seed_megathon_finals_event'/);
+  assert.match(megathonFinalsSeedMigration, /'megathonFinalsSeeded', v_megathon_finals_seeded/);
   assert.match(checkoutReturnPathMigration, /'contractVersion', '042_checkout_return_path_scope'/);
   assert.match(constantsLayer, /DEFAULT_EVENT_SLUG = process\.env\.NEXT_PUBLIC_EVENT_SLUG \|\| "megathon"/);
+  assert.match(constantsLayer, /FINAL_EVENT_SLUG = "megathon-finals"/);
   assert.match(constantsLayer, /LEGACY_EVENT_SLUG = "megathon-2026"/);
   assert.match(storeLayer, /slug: LEGACY_EVENT_SLUG/);
   assert.match(storeLayer, /slug: "megathon"/);
   assert.match(storeLayer, /slug: "testingmiki"/);
+  assert.match(storeLayer, /slug: FINAL_EVENT_SLUG/);
   assert.match(storeLayer, /title: "Who wins Megathon\?"/);
   assert.match(storeLayer, /title: "Who wins testingmiki\?"/);
+  assert.match(storeLayer, /title: "Who wins Megathon-Finals\?"/);
   assert.match(storeLayer, /title: "Which testingmiki signal moves fastest\?"/);
   assert.match(dataLayer, /const eventRows = await selectRows\("events", "select=id,slug"\)/);
   assert.match(dataLayer, /const eventIdBySlug = new Map/);
@@ -1164,6 +1184,7 @@ test("admin control surfaces avoid GET writes and expose proof/control affordanc
   assert.match(dataLayer, /const seededParticipants = seed\.participants\.map\(\(participant\) => \(\{ \.\.\.participant, eventId: remapEventId\(participant\.eventId\) \}\)\)/);
   assert.match(dataLayer, /slug=eq\.\$\{encodeURIComponent\(event\.slug\)\}&featured_market_id=is\.null/);
   assert.match(dataLayer, /megathonTestingmikiMarketsSeeded: true/);
+  assert.match(dataLayer, /megathonFinalsSeeded: true/);
   assert.match(dataLayer, /checkoutReturnPathScoped: true/);
   assert.match(adminNav, /AdminEventSwitcher/);
   assert.match(adminNav, /\["\/admin\/events", "Events"\]/);

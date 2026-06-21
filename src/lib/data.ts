@@ -1560,6 +1560,7 @@ export async function readinessContractData() {
       neutralHouseAgentNames: true,
       roleBattleStageModeRemoved: true,
       megathonTestingmikiMarketsSeeded: true,
+      megathonFinalsSeeded: true,
       checkoutReturnPathScoped: true,
       participantModerationRpc: true,
       marketAggregatesPrivate: true,

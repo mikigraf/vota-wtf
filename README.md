@@ -29,7 +29,7 @@ Run the app against local Supabase:
 npm run dev:local:supabase
 ```
 
-The generated local env points the root journey at `/join/megathon`, matching the seeded local rehearsal rooms.
+The generated local env keeps the rehearsal fallback at `/join/megathon`, while the public root `/` renders the landing page with one participant CTA to `/join/megathon-finals`.
 
 The generated local env block intentionally leaves `MOLLIE_API_KEY` empty. Outside production, that enables the built-in local checkout simulator at `/checkout/test/[purchaseId]` while keeping the production code path test-mode-only for real Mollie keys.
 
@@ -117,7 +117,7 @@ supabase link --project-ref <your-supabase-project-ref>
 npm run supabase:push
 ```
 
-The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, add hot-path indexes, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/048_hot_path_indexes.sql`.
+The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, add the Megathon-Finals room, lock down public table access, add hot-path indexes, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/049_seed_megathon_finals_event.sql`.
 
 Production Supabase auto-seeding is disabled by default. Leave `VOTA_ENABLE_PRODUCTION_AUTO_SEED` unset for the live event so demo seed markets and participants cannot be inserted on first read.
 

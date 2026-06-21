@@ -7,6 +7,7 @@ import {
   DEFAULT_EVENT_SLUG,
   FAIR_LAUNCH_PEOPLE,
   FAIR_LAUNCH_SIGNAL_CREDITS,
+  FINAL_EVENT_SLUG,
   INITIAL_STAKE_AMOUNT,
   LEGACY_EVENT_SLUG,
   LIVESTREAM_DEMO_EVENT_SLUG,
@@ -363,6 +364,7 @@ export function createSeedStore(): Store {
   const eventId = SEED_IDS.event;
   const megathonRoomEventId = "00000000-0000-4000-8000-000000000901";
   const testingmikiEventId = "00000000-0000-4000-8000-000000000902";
+  const megathonFinalsEventId = "00000000-0000-4000-8000-000000000903";
   const markets: Market[] = [
     {
       id: SEED_IDS.markets.winner,
@@ -587,6 +589,72 @@ export function createSeedStore(): Store {
       openedAt: now,
       createdAt: now,
       updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001201",
+      eventId: megathonFinalsEventId,
+      title: "Who wins Megathon-Finals?",
+      description: "Pick the finalist the room thinks will win the final announcement.",
+      category: "Finals",
+      imageUrl: "/stage-gradient.svg",
+      status: "open",
+      resolutionRule: "Official final winner announced by the Megathon-Finals judges on stage.",
+      showOnStage: true,
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
+      fairLaunchSignalCreditsThreshold: FAIR_LAUNCH_SIGNAL_CREDITS,
+      maxActionStake: MAX_ACTION_STAKE,
+      allowSwitching: true,
+      blindLaunchEnabled: true,
+      blindLaunchPredictionThreshold: BLIND_LAUNCH_PREDICTIONS,
+      blindLaunchSeconds: BLIND_LAUNCH_SECONDS,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001202",
+      eventId: megathonFinalsEventId,
+      title: "Will the final demo run cleanly?",
+      description: "Any visible restart, emergency fallback, or presenter apology counts as not clean.",
+      category: "Demo",
+      imageUrl: "/demo-signal.svg",
+      status: "open",
+      resolutionRule: "Resolved by organizer observation during the Megathon-Finals ceremony.",
+      showOnStage: true,
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
+      fairLaunchSignalCreditsThreshold: FAIR_LAUNCH_SIGNAL_CREDITS,
+      maxActionStake: MAX_ACTION_STAKE,
+      allowSwitching: true,
+      blindLaunchEnabled: true,
+      blindLaunchPredictionThreshold: BLIND_LAUNCH_PREDICTIONS,
+      blindLaunchSeconds: BLIND_LAUNCH_SECONDS,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001203",
+      eventId: megathonFinalsEventId,
+      title: "Which finalist gets the biggest crowd reaction?",
+      description: "Call the finalist that makes the audience react hardest during the final block.",
+      category: "Audience pulse",
+      imageUrl: "/demo-signal.svg",
+      status: "open",
+      resolutionRule: "Resolved by the host based on the strongest in-room reaction.",
+      showOnStage: true,
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
+      fairLaunchSignalCreditsThreshold: FAIR_LAUNCH_SIGNAL_CREDITS,
+      maxActionStake: MAX_ACTION_STAKE,
+      allowSwitching: true,
+      blindLaunchEnabled: true,
+      blindLaunchPredictionThreshold: BLIND_LAUNCH_PREDICTIONS,
+      blindLaunchSeconds: BLIND_LAUNCH_SECONDS,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
     }
   ];
   const outcomes: Outcome[] = [
@@ -620,7 +688,16 @@ export function createSeedStore(): Store {
     { id: "00000000-0000-4000-8000-000000001122", marketId: "00000000-0000-4000-8000-000000001102", label: "No", icon: "N" },
     { id: "00000000-0000-4000-8000-000000001131", marketId: "00000000-0000-4000-8000-000000001103", label: "Orbit surge", icon: "OS" },
     { id: "00000000-0000-4000-8000-000000001132", marketId: "00000000-0000-4000-8000-000000001103", label: "Demo rescue", icon: "DR" },
-    { id: "00000000-0000-4000-8000-000000001133", marketId: "00000000-0000-4000-8000-000000001103", label: "Crowd flip", icon: "CF" }
+    { id: "00000000-0000-4000-8000-000000001133", marketId: "00000000-0000-4000-8000-000000001103", label: "Crowd flip", icon: "CF" },
+    { id: "00000000-0000-4000-8000-000000001211", marketId: "00000000-0000-4000-8000-000000001201", label: "Team Orbit", icon: "O" },
+    { id: "00000000-0000-4000-8000-000000001212", marketId: "00000000-0000-4000-8000-000000001201", label: "Team Nova", icon: "N" },
+    { id: "00000000-0000-4000-8000-000000001213", marketId: "00000000-0000-4000-8000-000000001201", label: "Team Atlas", icon: "A" },
+    { id: "00000000-0000-4000-8000-000000001214", marketId: "00000000-0000-4000-8000-000000001201", label: "Other", icon: "?" },
+    { id: "00000000-0000-4000-8000-000000001221", marketId: "00000000-0000-4000-8000-000000001202", label: "Yes, clean run", icon: "OK" },
+    { id: "00000000-0000-4000-8000-000000001222", marketId: "00000000-0000-4000-8000-000000001202", label: "No, rescue needed", icon: "!" },
+    { id: "00000000-0000-4000-8000-000000001231", marketId: "00000000-0000-4000-8000-000000001203", label: "Orbit moment", icon: "OM" },
+    { id: "00000000-0000-4000-8000-000000001232", marketId: "00000000-0000-4000-8000-000000001203", label: "Nova moment", icon: "NM" },
+    { id: "00000000-0000-4000-8000-000000001233", marketId: "00000000-0000-4000-8000-000000001203", label: "Atlas moment", icon: "AM" }
   ];
   const events: EventRecord[] = [
     {
@@ -666,6 +743,17 @@ export function createSeedStore(): Store {
       stageMode: "join",
       featuredMarketId: "00000000-0000-4000-8000-000000001101",
       createdAt: now
+    },
+    {
+      id: megathonFinalsEventId,
+      slug: FINAL_EVENT_SLUG,
+      name: "Megathon-Finals",
+      status: "live",
+      starterCredits: STARTER_CREDITS,
+      emergencyPaused: false,
+      stageMode: "join",
+      featuredMarketId: "00000000-0000-4000-8000-000000001201",
+      createdAt: now
     }
   ];
   const store: Store = {
@@ -691,7 +779,7 @@ export function createSeedStore(): Store {
   return store;
 }
 
-const defaultRoomSeedSlugs = new Set(["megathon", "testingmiki"]);
+const defaultRoomSeedSlugs = new Set(["megathon", "testingmiki", FINAL_EVENT_SLUG]);
 let defaultRoomSeedCache: Store | undefined;
 
 function defaultRoomSeedStore() {

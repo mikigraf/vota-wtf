@@ -30,7 +30,7 @@ export type ReadinessContract = Record<string, unknown>;
 
 type EnvShape = Record<string, string | undefined>;
 type FetchLike = typeof fetch;
-const EXPECTED_SUPABASE_CONTRACT_VERSION = "048_hot_path_indexes";
+const EXPECTED_SUPABASE_CONTRACT_VERSION = "049_seed_megathon_finals_event";
 
 const proofEnvVars = [
   ["NEXT_PUBLIC_PROOF_REPO_URL", "Public repo / commit"],
@@ -381,7 +381,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
         "supabase-contract",
         "Supabase contract",
         "fail",
-        "Could not read the live Supabase contract. Run migrations through 048_hot_path_indexes.sql."
+        "Could not read the live Supabase contract. Run migrations through 049_seed_megathon_finals_event.sql."
       )
     ];
   }
@@ -424,7 +424,8 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
     ["platformProvisionSettlement", "Platform provision settlement"],
     ["positionsMarketSignalIndex", "Positions market signal index"],
     ["predictionActionsMarketCreatedIndex", "Prediction actions market timeline index"],
-    ["participantSessionsParticipantActiveIndex", "Participant active session index"]
+    ["participantSessionsParticipantActiveIndex", "Participant active session index"],
+    ["megathonFinalsSeeded", "Megathon-Finals room seeded"]
   ];
   const contractVersion = String(contract.contractVersion || "unknown contract");
   const hasExpectedContractVersion =

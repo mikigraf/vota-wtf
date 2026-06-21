@@ -258,7 +258,9 @@ test("readStore backfills default event rooms into older local JSON stores", () 
     const legacy = createSeedStore();
     const existing = createParticipantSession(legacy, "megathon-2026");
     const roomEventIds = new Set(
-      legacy.events.filter((event) => event.slug === "megathon" || event.slug === "testingmiki").map((event) => event.id)
+      legacy.events
+        .filter((event) => event.slug === "megathon" || event.slug === "testingmiki" || event.slug === "megathon-finals")
+        .map((event) => event.id)
     );
     const roomMarketIds = new Set(legacy.markets.filter((market) => roomEventIds.has(market.eventId)).map((market) => market.id));
     legacy.events = legacy.events.filter((event) => !roomEventIds.has(event.id));
@@ -270,14 +272,18 @@ test("readStore backfills default event rooms into older local JSON stores", () 
     const upgraded = readStore();
     const megathon = upgraded.events.find((event) => event.slug === "megathon");
     const testingmiki = upgraded.events.find((event) => event.slug === "testingmiki");
+    const megathonFinals = upgraded.events.find((event) => event.slug === "megathon-finals");
 
     assert.ok(megathon);
     assert.ok(testingmiki);
+    assert.ok(megathonFinals);
     assert.equal(upgraded.participants.some((participant) => participant.id === existing.participant.id), true);
     assert.equal(upgraded.markets.filter((market) => market.eventId === megathon.id).length, 3);
     assert.equal(upgraded.markets.filter((market) => market.eventId === testingmiki.id).length, 3);
+    assert.equal(upgraded.markets.filter((market) => market.eventId === megathonFinals.id).length, 3);
     assert.equal(publicState(upgraded, "megathon").markets.length, 3);
     assert.equal(publicState(upgraded, "testingmiki").markets.length, 3);
+    assert.equal(publicState(upgraded, "megathon-finals").markets.length, 3);
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;

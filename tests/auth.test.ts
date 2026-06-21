@@ -44,3 +44,10 @@ test("participant session helper accepts the explicit session header", () => {
     "session-789"
   );
 });
+
+test("join guard helper accepts the explicit load-test guard header", () => {
+  assert.equal(
+    getJoinGuardFromRequest(requestWithHeaders({ "x-vota-guard-key": "load-guard-001" })),
+    "load-guard-001"
+  );
+});

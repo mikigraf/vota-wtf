@@ -1,4 +1,5 @@
 export const DEFAULT_EVENT_SLUG = process.env.NEXT_PUBLIC_EVENT_SLUG || "megathon";
+export const FINAL_EVENT_SLUG = "megathon-finals";
 export const LEGACY_EVENT_SLUG = "megathon-2026";
 export const LIVESTREAM_DEMO_EVENT_SLUG = "livestream-demo";
 export const STARTER_CREDITS = 1000;

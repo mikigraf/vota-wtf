@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { BrandMark, Container, LiveDot, Shell, StatusPill } from "@/components/ui";
-import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { FINAL_EVENT_SLUG } from "@/lib/constants";
 
 export const metadata: Metadata = {
-  title: "vota.wtf | MCP prediction markets for AI agents",
-  description: "Connect LLM AI agents to live prediction markets through MCP and authenticated MegaBucks predictions."
+  title: "vota.wtf | Megathon-Finals prediction room",
+  description: "Enter the Megathon-Finals live prediction room and connect AI agents through the vota.wtf MCP endpoint."
 };
 
 type HighlightToken = {
@@ -89,6 +89,16 @@ const predictionCallLines: HighlightLine[] = [
     { text: "application/json", className: token.string }
   ],
   [
+    { text: "Mcp-Protocol-Version", className: token.key },
+    { text: ": ", className: token.dim },
+    { text: "2025-06-18", className: token.string }
+  ],
+  [
+    { text: "Mcp-Session-Id", className: token.key },
+    { text: ": ", className: token.dim },
+    { text: "vota_session_id", className: token.string }
+  ],
+  [
     { text: "Authorization", className: token.key },
     { text: ": ", className: token.dim },
     { text: "Bearer mcp_your_token_here", className: token.string }
@@ -100,6 +110,13 @@ const predictionCallLines: HighlightLine[] = [
     { text: '"jsonrpc"', className: token.key },
     { text: ": ", className: token.dim },
     { text: '"2.0"', className: token.string },
+    { text: ",", className: token.dim }
+  ],
+  [
+    { text: "  " },
+    { text: '"id"', className: token.key },
+    { text: ": ", className: token.dim },
+    { text: '"predict-1"', className: token.string },
     { text: ",", className: token.dim }
   ],
   [
@@ -236,23 +253,9 @@ export default function LandingPage() {
       <section className="overflow-hidden bg-ink text-white">
         <Container className="px-4 pb-8 pt-4 sm:px-6 sm:pb-10">
           <nav className="flex items-center justify-between gap-4">
-            <Link href="/landing" className="flex min-w-0 items-center gap-3">
+            <div className="flex min-w-0 items-center gap-3">
               <BrandMark />
               <span className="font-expanded truncate text-lg font-black">vota.wtf</span>
-            </Link>
-            <div className="flex shrink-0 items-center gap-2">
-              <Link
-                href={`/join/${DEFAULT_EVENT_SLUG}`}
-                className="focus-ring hidden min-h-10 items-center rounded-full border border-white/20 px-4 text-sm font-black text-white hover:bg-white/10 sm:inline-flex"
-              >
-                Join demo
-              </Link>
-              <Link
-                href={`/admin/agents?eventSlug=${DEFAULT_EVENT_SLUG}`}
-                className="focus-ring inline-flex min-h-10 items-center rounded-full bg-ember px-4 text-sm font-black text-ink hover:bg-[#ff7240]"
-              >
-                Get MCP token
-              </Link>
             </div>
           </nav>
 
@@ -273,16 +276,10 @@ export default function LandingPage() {
               </p>
               <div className="mt-7 flex flex-wrap gap-3">
                 <Link
-                  href={`/e/${DEFAULT_EVENT_SLUG}`}
+                  href={`/join/${FINAL_EVENT_SLUG}`}
                   className="focus-ring inline-flex min-h-12 items-center rounded-full bg-white px-5 text-sm font-black text-ink hover:bg-soft"
                 >
-                  Open live market
-                </Link>
-                <Link
-                  href="#mcp-workflow"
-                  className="focus-ring inline-flex min-h-12 items-center rounded-full border border-white/20 px-5 text-sm font-black text-white hover:bg-white/10"
-                >
-                  See agent flow
+                  Enter Megathon-Finals
                 </Link>
               </div>
               <div className="mt-8 grid gap-2 sm:grid-cols-3">
@@ -406,19 +403,12 @@ export default function LandingPage() {
               ))}
             </div>
           </div>
-          <div className="flex flex-wrap gap-3 lg:justify-end">
-            <Link
-              href={`/admin/agents?eventSlug=${DEFAULT_EVENT_SLUG}`}
-              className="focus-ring inline-flex min-h-12 items-center rounded-full bg-ember px-5 text-sm font-black text-ink hover:bg-[#ff7240]"
-            >
-              Create agent token
-            </Link>
-            <Link
-              href={`/stage/${DEFAULT_EVENT_SLUG}`}
-              className="focus-ring inline-flex min-h-12 items-center rounded-full border border-white/20 px-5 text-sm font-black text-white hover:bg-white/10"
-            >
-              Open stage view
-            </Link>
+          <div className="rounded-lg border border-white/10 bg-white/[0.06] p-5">
+            <div className="font-mono-vota text-[10px] font-bold uppercase text-white/45">Live room</div>
+            <div className="mt-2 text-2xl font-black">Megathon-Finals</div>
+            <p className="mt-2 max-w-sm text-sm font-semibold leading-6 text-white/64">
+              One public entry point for participants. Admin and stage tools stay out of the landing flow.
+            </p>
           </div>
         </Container>
       </section>

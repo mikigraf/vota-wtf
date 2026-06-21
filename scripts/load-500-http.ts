@@ -7,7 +7,7 @@ const CONCURRENCY = Math.max(1, Math.min(PARTICIPANT_COUNT, Number(process.env.L
 const REPLAY_COUNT = Math.max(0, Math.floor(PARTICIPANT_COUNT * Number(process.env.LOAD_REPLAY_RATE || 0.1)));
 const ORIGIN = (process.env.LOAD_ORIGIN || "https://vota.wtf").replace(/\/+$/, "");
 const EVENT_SLUG = process.env.LOAD_EVENT_SLUG || "megathon-2026";
-const MARKET_ID = process.env.LOAD_MARKET_ID || "c9c06077-f906-4dd5-9856-521e68b9852e";
+const MARKET_ID = process.env.LOAD_MARKET_ID || "";
 const AMOUNT_CREDITS = Math.max(1, Number(process.env.LOAD_AMOUNT_CREDITS || INITIAL_STAKE_AMOUNT));
 const RUN_ID = process.env.LOAD_RUN_ID || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -35,6 +35,7 @@ type JourneyResult = {
   cookie?: string;
   durationMs: number;
   error?: string;
+  guardKey?: string;
   outcomeId?: string;
   participantId?: string;
   predictMs?: number;
@@ -50,6 +51,9 @@ type ReplayResult = {
 function assertSafeTarget() {
   const isLocal = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?$/i.test(ORIGIN);
   if (isLocal) return;
+  if (process.env.LOAD_ALLOW_LIVE !== "1") {
+    throw new Error("Refusing to write to a deployed origin. Set LOAD_ALLOW_LIVE=1 and LOAD_MARKET_ID=<open-disposable-market-id> to run this against a live app.");
+  }
   if (!MARKET_ID) {
     throw new Error("LOAD_MARKET_ID is required for deployed HTTP load runs so the script does not auto-select a live market.");
   }
@@ -82,6 +86,17 @@ function jsonHeaders(cookie?: string, extra?: Record<string, string>) {
     "content-type": "application/json",
     ...(cookie ? { cookie } : {}),
     ...(extra || {})
+  };
+}
+
+function virtualDeviceHeaders(index: number) {
+  const suffix = String(index + 1).padStart(4, "0");
+  return {
+    guardKey: `load-guard-${RUN_ID}-${suffix}`,
+    headers: {
+      "user-agent": `vota-load-test/${RUN_ID}/${suffix}`,
+      "x-vota-guard-key": `load-guard-${RUN_ID}-${suffix}`
+    }
   };
 }
 
@@ -160,8 +175,12 @@ async function main() {
 
   async function participantJourney(index: number): Promise<JourneyResult> {
     const started = performance.now();
+    const device = virtualDeviceHeaders(index);
     try {
-      const { data: initData, response: initResponse } = await jsonFetch("/api/session/init", { body: { eventSlug: EVENT_SLUG } });
+      const { data: initData, response: initResponse } = await jsonFetch("/api/session/init", {
+        headers: device.headers,
+        body: { eventSlug: EVENT_SLUG }
+      });
       const sessionId = String(initData.sessionId || "");
       assert.ok(sessionId);
       const cookie = cookieHeader(initResponse);
@@ -170,7 +189,7 @@ async function main() {
       const profileData = await jsonRequest("/api/session/profile", {
         method: "PATCH",
         cookie,
-        headers: { "x-vota-participant-session": sessionId },
+        headers: { ...device.headers, "x-vota-participant-session": sessionId },
         body: {
           nickname: `load_${RUN_ID}_${suffix}`,
           email: `load-${RUN_ID}-${suffix}@example.test`
@@ -183,7 +202,7 @@ async function main() {
       const predictStarted = performance.now();
       const prediction = await jsonRequest(`/api/markets/${market.id}/predict`, {
         cookie,
-        headers: { "idempotency-key": requestId, "x-vota-participant-session": sessionId },
+        headers: { ...device.headers, "idempotency-key": requestId, "x-vota-participant-session": sessionId },
         body: {
           outcomeId: outcome.id,
           amountCredits: AMOUNT_CREDITS,
@@ -195,6 +214,7 @@ async function main() {
       return {
         cookie,
         durationMs: performance.now() - started,
+        guardKey: device.guardKey,
         outcomeId: outcome.id,
         participantId,
         predictMs: performance.now() - predictStarted,
@@ -220,6 +240,10 @@ async function main() {
       const replay = await jsonRequest(`/api/markets/${market.id}/predict`, {
         cookie: journey.cookie,
         headers: {
+          ...(journey.guardKey ? {
+            "user-agent": `vota-load-test/${RUN_ID}/replay`,
+            "x-vota-guard-key": journey.guardKey
+          } : {}),
           "idempotency-key": journey.requestId || "",
           ...(journey.sessionId ? { "x-vota-participant-session": journey.sessionId } : {})
         },

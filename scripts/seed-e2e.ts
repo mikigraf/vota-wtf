@@ -17,6 +17,11 @@ const E2E_EVENTS: E2EEvent[] = [
     id: "00000000-0000-4000-8000-000000000902",
     slug: "testingmiki",
     name: "testingmiki"
+  },
+  {
+    id: "00000000-0000-4000-8000-000000000903",
+    slug: "megathon-finals",
+    name: "Megathon-Finals"
   }
 ];
 
@@ -29,6 +34,11 @@ const MARKET_IDS: Record<string, string[]> = {
   testingmiki: [
     "00000000-0000-4000-8000-000000001101",
     "00000000-0000-4000-8000-000000001102"
+  ],
+  "megathon-finals": [
+    "00000000-0000-4000-8000-000000001201",
+    "00000000-0000-4000-8000-000000001202",
+    "00000000-0000-4000-8000-000000001203"
   ]
 };
 
@@ -55,6 +65,21 @@ const OUTCOME_IDS: Record<string, string[]> = {
   "00000000-0000-4000-8000-000000001102": [
     "00000000-0000-4000-8000-000000001121",
     "00000000-0000-4000-8000-000000001122"
+  ],
+  "00000000-0000-4000-8000-000000001201": [
+    "00000000-0000-4000-8000-000000001211",
+    "00000000-0000-4000-8000-000000001212",
+    "00000000-0000-4000-8000-000000001213",
+    "00000000-0000-4000-8000-000000001214"
+  ],
+  "00000000-0000-4000-8000-000000001202": [
+    "00000000-0000-4000-8000-000000001221",
+    "00000000-0000-4000-8000-000000001222"
+  ],
+  "00000000-0000-4000-8000-000000001203": [
+    "00000000-0000-4000-8000-000000001231",
+    "00000000-0000-4000-8000-000000001232",
+    "00000000-0000-4000-8000-000000001233"
   ]
 };
 
@@ -274,17 +299,16 @@ async function seedEvent(input: E2EEvent) {
   const winner = await createOpenMarket(input.slug, marketIds[0], `Who wins ${input.name}?`, "Finals", [
     "Team Orbit",
     "Team Nova",
-    "Team Atlas"
+    "Team Atlas",
+    ...(input.slug === "megathon-finals" ? ["Other"] : [])
   ]);
-  await createOpenMarket(input.slug, marketIds[1], input.slug === "testingmiki" ? `Will ${input.name} resolve cleanly?` : `Will ${input.name} demo fail?`, "Demo", [
+  await createOpenMarket(input.slug, marketIds[1], input.slug === "testingmiki" ? `Will ${input.name} resolve cleanly?` : input.slug === "megathon-finals" ? "Will the final demo run cleanly?" : `Will ${input.name} demo fail?`, "Demo", [
     "Yes",
     "No"
   ]);
   if (marketIds[2]) {
-    await createOpenMarket(input.slug, marketIds[2], "Which moment gets the loudest reaction?", "Audience pulse", [
-      "Winner reveal",
-      "Demo surprise",
-      "Founder cameo"
+    await createOpenMarket(input.slug, marketIds[2], input.slug === "megathon-finals" ? "Which finalist gets the biggest crowd reaction?" : "Which moment gets the loudest reaction?", "Audience pulse", [
+      ...(input.slug === "megathon-finals" ? ["Orbit moment", "Nova moment", "Atlas moment"] : ["Winner reveal", "Demo surprise", "Founder cameo"])
     ]);
   }
   await updateStageControlsData(

@@ -63,7 +63,12 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(loadHttpScript, /fetch\(`\$\{ORIGIN\}\$\{route\}`/);
   assert.match(loadHttpScript, /"https:\/\/vota\.wtf"/);
   assert.match(loadHttpScript, /"megathon-2026"/);
+  assert.match(loadHttpScript, /LOAD_ALLOW_LIVE/);
+  assert.match(loadHttpScript, /Refusing to write/);
+  assert.match(loadHttpScript, /const MARKET_ID = process\.env\.LOAD_MARKET_ID \|\| ""/);
   assert.match(loadHttpScript, /cookieHeader\(initResponse\)/);
+  assert.match(loadHttpScript, /virtualDeviceHeaders/);
+  assert.match(loadHttpScript, /x-vota-guard-key/);
   assert.match(loadHttpScript, /x-vota-participant-session/);
   assert.doesNotMatch(loadHttpScript, /app\/api\/session\/init\/route/);
   assert.doesNotMatch(loadHttpScript, /app\/api\/session\/profile\/route/);
@@ -103,10 +108,14 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(e2eSeed, /name: "Megathon"/);
   assert.match(e2eSeed, /slug: "testingmiki"/);
   assert.match(e2eSeed, /name: "testingmiki"/);
+  assert.match(e2eSeed, /slug: "megathon-finals"/);
+  assert.match(e2eSeed, /name: "Megathon-Finals"/);
   assert.match(e2eSeed, /00000000-0000-4000-8000-000000000901/);
   assert.match(e2eSeed, /00000000-0000-4000-8000-000000000902/);
+  assert.match(e2eSeed, /00000000-0000-4000-8000-000000000903/);
   assert.match(e2eSeed, /00000000-0000-4000-8000-000000001001/);
   assert.match(e2eSeed, /00000000-0000-4000-8000-000000001101/);
+  assert.match(e2eSeed, /00000000-0000-4000-8000-000000001201/);
   assert.match(playwrightConfig, /reuseExistingServer: process\.env\.PLAYWRIGHT_REUSE_SERVER === "1"/);
   assert.match(readme, /npm run supabase:start/);
   assert.match(readme, /supabase link --project-ref <your-supabase-project-ref>/);
@@ -123,7 +132,8 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(readme, /READINESS_URL=https:\/\/vota\.wtf npm run verify:deploy/);
   assert.match(readme, /LOAD_MARKET_ID=<open-disposable-market-id>/);
   assert.match(readme, /docs\/live-event-readiness-plan\.md/);
-  assert.match(readme, /048_hot_path_indexes\.sql/);
+  assert.match(readme, /049_seed_megathon_finals_event\.sql/);
+  assert.match(readme, /\/join\/megathon-finals/);
   assert.match(readme, /^NEXT_PUBLIC_EVENT_SLUG=megathon$/m);
   assert.match(workflow, /node-version: 22/);
   assert.match(workflow, /npm install/);
@@ -134,10 +144,10 @@ test("local Supabase runbook and scripts are wired", () => {
 test("live-event readiness plan captures the manual gates automation cannot prove", () => {
   const plan = fs.readFileSync("docs/live-event-readiness-plan.md", "utf8");
 
-  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/048_hot_path_indexes\.sql` applied/);
-  assert.match(plan, /reopen `\/j\/megathon`/);
-  assert.match(plan, /Apply migrations through `048`/);
-  assert.match(plan, /Run the projector flow: `\/stage\/megathon`/);
+  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/049_seed_megathon_finals_event\.sql` applied/);
+  assert.match(plan, /reopen `\/j\/megathon-finals`/);
+  assert.match(plan, /Apply migrations through `049`/);
+  assert.match(plan, /Run the projector flow: `\/stage\/megathon-finals`/);
   assert.match(plan, /npm run smoke:json/);
   assert.match(plan, /local server smoke gate/);
   assert.match(plan, /REQUIRE_SMOKE_SERVER=1 npm run smoke:json/);
@@ -450,7 +460,8 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     platformProvisionSettlement: true,
     positionsMarketSignalIndex: true,
     predictionActionsMarketCreatedIndex: true,
-    participantSessionsParticipantActiveIndex: true
+    participantSessionsParticipantActiveIndex: true,
+    megathonFinalsSeeded: true
   };
   const staleContract = await buildReadinessReportWithLiveChecks(
     store,
@@ -471,7 +482,7 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     deployEnv,
     "megathon-2026",
     async () => new Response(JSON.stringify({ status: "paid" }), { status: 200 }),
-    { ...contract, contractVersion: "048_hot_path_indexes" }
+    { ...contract, contractVersion: "049_seed_megathon_finals_event" }
   );
   assert.equal(currentContract.ready, true);
 });

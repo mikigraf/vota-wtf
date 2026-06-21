@@ -176,7 +176,7 @@ export function newJoinGuardValue() {
 }
 
 export function getJoinGuardFromRequest(request: NextRequest) {
-  return getRequestCookie(request, JOIN_GUARD_COOKIE);
+  return getRequestCookie(request, JOIN_GUARD_COOKIE) || request.headers.get("x-vota-guard-key")?.trim() || undefined;
 }
 
 export async function joinGuardHash(value: string, ip?: string, userAgent?: string) {
