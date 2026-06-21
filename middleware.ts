@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { isAdminFromRequest } from "@/lib/auth";
 
+
 function sameOriginAdminMutation(request: NextRequest) {
   if (!["POST", "PUT", "PATCH", "DELETE"].includes(request.method)) return true;
   const origin = request.headers.get("origin");
