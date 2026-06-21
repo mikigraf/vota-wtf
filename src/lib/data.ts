@@ -1566,6 +1566,7 @@ export async function readinessContractData() {
       participantUniqueEmailIndex: true,
       poolSettlementRpc: true,
       voidMarketRpc: true,
+      deleteMarketRpc: true,
       transitionMarketRpc: true,
       marketSignalsRpc: true,
       predictionLockHelperRpc: true,

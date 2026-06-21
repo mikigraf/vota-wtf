@@ -30,7 +30,7 @@ export type ReadinessContract = Record<string, unknown>;
 
 type EnvShape = Record<string, string | undefined>;
 type FetchLike = typeof fetch;
-const EXPECTED_SUPABASE_CONTRACT_VERSION = "049_seed_megathon_finals_event";
+const EXPECTED_SUPABASE_CONTRACT_VERSION = "051_delete_market_readiness_contract";
 
 const proofEnvVars = [
   ["NEXT_PUBLIC_PROOF_REPO_URL", "Public repo / commit"],
@@ -381,7 +381,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
         "supabase-contract",
         "Supabase contract",
         "fail",
-        "Could not read the live Supabase contract. Run migrations through 049_seed_megathon_finals_event.sql."
+        "Could not read the live Supabase contract. Run migrations through 051_delete_market_readiness_contract.sql."
       )
     ];
   }
@@ -396,6 +396,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
     ["participantUniqueEmailIndex", "Unique participant email index"],
     ["poolSettlementRpc", "Winner-pool settlement RPC"],
     ["voidMarketRpc", "Void market RPC"],
+    ["deleteMarketRpc", "Delete market RPC"],
     ["transitionMarketRpc", "Market transition RPC"],
     ["marketSignalsRpc", "Market signal RPC"],
     ["predictionLockHelperRpc", "Market prediction lock helper"],
