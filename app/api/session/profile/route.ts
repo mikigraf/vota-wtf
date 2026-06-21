@@ -3,9 +3,9 @@ import { getParticipantSessionIdFromRequest } from "@/lib/auth";
 import { generatedAvatarDataUrl, isGeneratedAvatarUrl } from "@/lib/avatar";
 import { findNextOpenMarketData, getSessionParticipantData, updateParticipantProfileData } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
-import { hasCompletedProfile, isValidRole } from "@/lib/participants";
+import { hasCompletedProfile } from "@/lib/participants";
 import { saveAvatarDataUrl } from "@/lib/uploads";
-import { normalizeNickname, normalizeRole } from "@/lib/utils";
+import { isValidEmail, normalizeEmail, normalizeNickname } from "@/lib/utils";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionParticipantData(getParticipantSessionIdFromRequest(request));
@@ -20,11 +20,12 @@ export async function PATCH(request: NextRequest) {
   if (hasCompletedProfile(session.participant)) return badRequest("Profile is locked after entering the arena.", 409);
   const body = await readJsonObject(request);
   const rawNickname = String(body.nickname || "").trim();
-  const rawRole = String(body.role || "");
+  const rawEmail = String(body.email || "").trim();
   if (!rawNickname) return badRequest("Enter a stage name before joining.");
-  if (!isValidRole(rawRole)) return badRequest("Choose your role before joining.");
+  if (!isValidEmail(rawEmail)) return badRequest("Enter your email address before joining.");
   const nickname = normalizeNickname(rawNickname);
-  const role = normalizeRole(rawRole);
+  const email = normalizeEmail(rawEmail);
+  const role = "other";
   let avatarUrl: string | undefined;
   const submittedAvatar = typeof body.avatarDataUrl === "string" ? body.avatarDataUrl.trim() : "";
   if (submittedAvatar.startsWith("data:image/") && !isGeneratedAvatarUrl(submittedAvatar)) {
@@ -36,11 +37,17 @@ export async function PATCH(request: NextRequest) {
   } else if (!session.participant.avatarUrl || isGeneratedAvatarUrl(session.participant.avatarUrl)) {
     avatarUrl = generatedAvatarDataUrl(nickname, role);
   }
-  const participant = await updateParticipantProfileData(session.participant.id, {
-    nickname,
-    role,
-    avatarUrl
-  });
+  let participant;
+  try {
+    participant = await updateParticipantProfileData(session.participant.id, {
+      nickname,
+      email,
+      role,
+      avatarUrl
+    });
+  } catch (error) {
+    return badRequest(error instanceof Error ? error.message : "Could not join.");
+  }
   const nextMarket = await findNextOpenMarketData(session.participant.eventId);
   return json({ participant, nextMarketId: nextMarket?.id });
 }

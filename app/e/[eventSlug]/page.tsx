@@ -109,9 +109,7 @@ export default async function EventPage({
           <>
             <span className="font-mono-vota text-xs text-white/80">{session?.wallet ? mbucks(session.wallet.balanceCredits) : "1,000 starter MBucks"}</span>
             <LiveDot />
-            {session ? (
-              <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase text-white/80">{session.participant.role}</span>
-            ) : null}
+            {session ? <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase text-white/80">{session.participant.nickname}</span> : null}
           </>
         }
       />
@@ -121,7 +119,7 @@ export default async function EventPage({
             { label: "OPEN", value: `${openMarkets} MARKETS`, tone: "mint" },
             { label: "TOP ORACLE", value: leaders[0]?.nickname || "SOON", tone: "ember" },
             { label: "CREDITS", value: session?.wallet ? mbucks(session.wallet.balanceCredits) : "FREE TO PLAY", tone: "white" },
-            { label: "ROLE BATTLE", value: "BUILDERS / SPONSORS / INVESTORS", tone: "mint" }
+            { label: "LIVE ODDS", value: "ROOM SIGNAL OVER TIME", tone: "mint" }
           ]}
         />
       </div>
@@ -263,11 +261,7 @@ export default async function EventPage({
           </div>
         </Card>
 
-        <section className="hidden gap-4 lg:grid lg:grid-cols-3">
-          <LeaderboardMini title="Builders" rows={groups.byRole.builder.slice(0, 4)} />
-          <LeaderboardMini title="Sponsors" rows={groups.byRole.sponsor.slice(0, 4)} />
-          <LeaderboardMini title="Investors" rows={groups.byRole.investor.slice(0, 4)} />
-          <LeaderboardMini title="Other" rows={groups.byRole.other.slice(0, 4)} />
+        <section className="hidden gap-4 lg:grid lg:grid-cols-2">
           <LeaderboardMini title="Early callers" rows={groups.earlyCallers.slice(0, 4)} metric="earlyScore" />
           <LeaderboardMini title="Contrarian calls" rows={groups.contrarianCalls.slice(0, 4)} metric="contrarianScore" />
         </section>
@@ -357,7 +351,6 @@ function LeaderboardMini({
             <span className="font-mono-vota text-faded">{index + 1}</span>
             <span>
               <span className="font-extrabold">{row.nickname}</span>
-              <span className="font-mono-vota block text-[10px] uppercase text-faded">{row.role}</span>
             </span>
             <span className="font-mono-vota text-ember">{credits(row[metric])}</span>
           </div>

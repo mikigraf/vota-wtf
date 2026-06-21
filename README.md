@@ -85,7 +85,7 @@ supabase link --project-ref <your-supabase-project-ref>
 npm run supabase:push
 ```
 
-The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/034_prediction_serialization_readiness.sql`.
+The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/036_admin_event_switcher_seed_events.sql`.
 
 Production Supabase auto-seeding is disabled by default. Leave `VOTA_ENABLE_PRODUCTION_AUTO_SEED` unset for the live event so demo seed markets and participants cannot be inserted on first read.
 

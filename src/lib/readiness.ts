@@ -29,7 +29,7 @@ export type ReadinessContract = Record<string, unknown>;
 
 type EnvShape = Record<string, string | undefined>;
 type FetchLike = typeof fetch;
-const EXPECTED_SUPABASE_CONTRACT_VERSION = "034_prediction_serialization_readiness";
+const EXPECTED_SUPABASE_CONTRACT_VERSION = "035_email_unique_names_no_roles";
 
 const proofEnvVars = [
   ["NEXT_PUBLIC_PROOF_REPO_URL", "Public repo / commit"],
@@ -366,7 +366,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
         "supabase-contract",
         "Supabase contract",
         "fail",
-        "Could not read the live Supabase contract. Run migrations through 034_prediction_serialization_readiness.sql."
+        "Could not read the live Supabase contract. Run migrations through 035_email_unique_names_no_roles.sql."
       )
     ];
   }
@@ -376,6 +376,8 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
     ["checkoutIntentLinkRpc", "Checkout intent link RPC"],
     ["pendingPurchaseRpc", "Pending checkout transaction RPC"],
     ["profileLockRpc", "Profile lock RPC"],
+    ["participantEmailColumn", "Participant email column"],
+    ["participantUniqueNameIndex", "Unique participant stage-name index"],
     ["poolSettlementRpc", "Winner-pool settlement RPC"],
     ["voidMarketRpc", "Void market RPC"],
     ["transitionMarketRpc", "Market transition RPC"],

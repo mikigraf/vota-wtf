@@ -1,4 +1,5 @@
 import { DEFAULT_EVENT_SLUG } from "./constants";
+import { isValidEmail } from "./utils";
 import type { Participant, Role, Store } from "./types";
 
 const ROLE_VALUES = new Set<Role>(["builder", "sponsor", "investor", "other"]);
@@ -26,8 +27,8 @@ export function isValidRole(value: string): value is Role {
   return ROLE_VALUES.has(value as Role);
 }
 
-export function hasCompletedProfile(participant?: Pick<Participant, "nickname" | "role"> | null) {
+export function hasCompletedProfile(participant?: Pick<Participant, "nickname" | "email" | "role"> | null) {
   if (!participant) return false;
   const nickname = participant.nickname.trim();
-  return Boolean(nickname && nickname !== "oracle" && isValidRole(participant.role));
+  return Boolean(nickname && nickname !== "oracle" && isValidEmail(participant.email || "") && isValidRole(participant.role));
 }

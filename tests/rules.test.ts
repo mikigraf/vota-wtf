@@ -45,8 +45,10 @@ import { LIVESTREAM_DEMO_EVENT_SLUG, PLATFORM_PRIOR_CREDITS_PER_OUTCOME } from "
 
 function join(store = createSeedStore()) {
   const joined = createParticipantSession(store, "megathon-2026");
+  const suffix = joined.participant.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
   joined.participant = updateParticipantProfile(store, joined.participant.id, {
-    nickname: `builder_${joined.participant.id.slice(-4)}`,
+    nickname: `builder_${suffix}`,
+    email: `builder-${suffix}@example.test`,
     role: "builder",
     avatarUrl: `/uploads/avatars/${joined.participant.id}.webp`
   });
@@ -55,8 +57,10 @@ function join(store = createSeedStore()) {
 
 function joinEvent(store: ReturnType<typeof createSeedStore>, eventSlug: string) {
   const joined = createParticipantSession(store, eventSlug);
+  const suffix = joined.participant.id.replace(/[^a-zA-Z0-9]/g, "").slice(0, 20);
   joined.participant = updateParticipantProfile(store, joined.participant.id, {
-    nickname: `builder_${joined.participant.id.slice(-4)}`,
+    nickname: `builder_${suffix}`,
+    email: `builder-${suffix}@example.test`,
     role: "builder",
     avatarUrl: `/uploads/avatars/${joined.participant.id}.webp`
   });
@@ -143,10 +147,23 @@ test("human sessions must complete profile before predicting", () => {
   );
 });
 
-test("profile completion requires a real stage name and role but not an uploaded photo", () => {
-  assert.equal(hasCompletedProfile({ nickname: "oracle", role: "other" }), false);
-  assert.equal(hasCompletedProfile({ nickname: "  ", role: "builder" }), false);
-  assert.equal(hasCompletedProfile({ nickname: "livestream_host", role: "other" }), true);
+test("profile completion requires a unique stage name and email but not a visible role or uploaded photo", () => {
+  assert.equal(hasCompletedProfile({ nickname: "oracle", email: "oracle@example.test", role: "other" }), false);
+  assert.equal(hasCompletedProfile({ nickname: "  ", email: "blank@example.test", role: "builder" }), false);
+  assert.equal(hasCompletedProfile({ nickname: "livestream_host", role: "other" }), false);
+  assert.equal(hasCompletedProfile({ nickname: "livestream_host", email: "host@example.test", role: "other" }), true);
+
+  const store = createSeedStore();
+  const first = join(store);
+  const second = createParticipantSession(store, "megathon-2026");
+  assert.throws(
+    () =>
+      updateParticipantProfile(store, second.participant.id, {
+        nickname: first.participant.nickname,
+        email: "duplicate@example.test"
+      }),
+    /stage name is already taken/
+  );
 });
 
 test("human profile is locked after entering the arena", () => {
@@ -156,12 +173,12 @@ test("human profile is locked after entering the arena", () => {
     () =>
       updateParticipantProfile(store, user.participant.id, {
         nickname: "renamed_builder",
-        role: "sponsor",
+        email: "renamed@example.test",
         avatarUrl: "/uploads/avatars/renamed.webp"
       }),
     /locked after entering/
   );
-  assert.equal(store.participants.find((item) => item.id === user.participant.id)?.role, "builder");
+  assert.equal(store.participants.find((item) => item.id === user.participant.id)?.nickname, user.participant.nickname);
 });
 
 test("livestream demo seed preloads 37 callers across all outcomes", () => {
@@ -1683,7 +1700,11 @@ test("receipt links use the first scoreable correct action after a switch", () =
 test("advanced analytics report includes role, market, Cala, and PixVerse outputs", () => {
   const store = createSeedStore();
   const user = createParticipantSession(store, "megathon-2026");
-  user.participant = updateParticipantProfile(store, user.participant.id, { nickname: "demo_builder", role: "builder" });
+  user.participant = updateParticipantProfile(store, user.participant.id, {
+    nickname: "demo_builder",
+    email: "demo.builder@example.test",
+    role: "builder"
+  });
   const prediction = placePrediction(store, {
     participantId: user.participant.id,
     marketId: SEED_IDS.markets.winner,
@@ -1764,6 +1785,7 @@ test("Sunday acceptance loop works through prediction, checkout, resolution, lea
   const joined = createParticipantSession(store, "megathon-2026");
   const participant = updateParticipantProfile(store, joined.participant.id, {
     nickname: "demo_druid",
+    email: "demo.druid@example.test",
     role: "builder",
     avatarUrl: "/uploads/avatars/demo.webp"
   });

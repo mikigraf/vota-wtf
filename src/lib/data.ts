@@ -57,7 +57,7 @@ import type {
   PredictionPreview,
   Wallet
 } from "./types";
-import { makeId, normalizeNickname, normalizeRole, nowIso } from "./utils";
+import { makeId, normalizeEmail, normalizeNickname, normalizeRole, nowIso } from "./utils";
 
 type Row = Record<string, any>;
 type PaymentStatus = "paid" | "failed" | "canceled";
@@ -363,6 +363,7 @@ function participantFromRow(row: Row): Participant {
     eventId: row.event_id,
     participantType: row.participant_type,
     nickname: row.nickname,
+    email: row.email || undefined,
     role: row.role,
     avatarUrl: row.avatar_url || undefined,
     isAvatarHidden: row.is_avatar_hidden,
@@ -378,6 +379,7 @@ function participantToRow(participant: Participant): Row {
     event_id: participant.eventId,
     participant_type: participant.participantType,
     nickname: participant.nickname,
+    email: participant.email || null,
     role: participant.role,
     avatar_url: participant.avatarUrl || null,
     is_avatar_hidden: participant.isAvatarHidden,
@@ -390,6 +392,7 @@ function participantToRow(participant: Participant): Row {
 function participantMutableToRow(participant: Participant): Row {
   return {
     nickname: participant.nickname,
+    email: participant.email || null,
     role: participant.role,
     avatar_url: participant.avatarUrl || null
   };
@@ -1406,6 +1409,8 @@ export async function readinessContractData() {
       checkoutIntentLinkRpc: true,
       pendingPurchaseRpc: true,
       profileLockRpc: true,
+      participantEmailColumn: true,
+      participantUniqueNameIndex: true,
       poolSettlementRpc: true,
       voidMarketRpc: true,
       transitionMarketRpc: true,
@@ -1476,13 +1481,14 @@ export async function initParticipantSessionData(existingSessionId?: string, eve
 
 export async function updateParticipantProfileData(
   participantId: string,
-  input: { nickname: string; role: string; avatarUrl?: string }
+  input: { nickname: string; email?: string; role?: string; avatarUrl?: string }
 ) {
   if (!useSupabaseStore()) {
     return mutateDataStore((store) =>
       updateParticipantProfile(store, participantId, {
         nickname: input.nickname,
-        role: normalizeRole(input.role),
+        email: normalizeEmail(input.email || ""),
+        role: normalizeRole(input.role || "other"),
         avatarUrl: input.avatarUrl
       })
     );
@@ -1490,7 +1496,8 @@ export async function updateParticipantProfileData(
   const updated = await rpc<Row>("update_participant_profile_tx", {
     p_participant_id: participantId,
     p_nickname: normalizeNickname(input.nickname),
-    p_role: normalizeRole(input.role),
+    p_email: normalizeEmail(input.email || ""),
+    p_role: normalizeRole(input.role || "other"),
     p_avatar_url: input.avatarUrl || null
   });
   return participantFromRow(updated);

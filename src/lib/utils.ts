@@ -49,6 +49,15 @@ export function normalizeNickname(input: string) {
   return cleaned || `oracle_${Math.floor(Math.random() * 9000 + 1000)}`;
 }
 
+export function normalizeEmail(input: string) {
+  return input.trim().toLowerCase().slice(0, 254);
+}
+
+export function isValidEmail(input: string) {
+  const email = normalizeEmail(input);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
 export function normalizeRole(input: string): "builder" | "sponsor" | "investor" | "other" {
   if (input === "builder" || input === "sponsor" || input === "investor") return input;
   return "other";

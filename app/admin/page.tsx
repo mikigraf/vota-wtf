@@ -4,15 +4,32 @@ import { AdminNav } from "@/components/admin-nav";
 import { AdminPageHeader, ButtonLink, Card, Container, Shell, Stat, StatusPill } from "@/components/ui";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { readDataStore } from "@/lib/data";
+import { firstSearchParam } from "@/lib/search-params";
 import { dashboardMetrics, leaderboardGroups } from "@/lib/store";
 import { credits, euro, mbucks } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
-export default async function AdminDashboard() {
+export default async function AdminDashboard({
+  searchParams
+}: {
+  searchParams: Promise<{ eventSlug?: string | string[] }>;
+}) {
   const store = await readDataStore();
-  const metrics = dashboardMetrics(store, DEFAULT_EVENT_SLUG);
-  const groups = leaderboardGroups(store, DEFAULT_EVENT_SLUG);
+  const requestedSlug = firstSearchParam((await searchParams).eventSlug) || DEFAULT_EVENT_SLUG;
+  const selectedEvent = store.events.find((event) => event.slug === requestedSlug) || store.events.find((event) => event.slug === DEFAULT_EVENT_SLUG) || store.events[0];
+  if (!selectedEvent) {
+    return (
+      <Shell className="bg-admin">
+        <Container className="grid gap-6">
+          <AdminNav />
+          <Card>No events are configured yet.</Card>
+        </Container>
+      </Shell>
+    );
+  }
+  const metrics = dashboardMetrics(store, selectedEvent.slug);
+  const groups = leaderboardGroups(store, selectedEvent.slug);
   const leaders = groups.overall.slice(0, 5);
   const eventMarkets = store.markets.filter((market) => market.eventId === metrics.event.id);
   return (

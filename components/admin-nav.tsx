@@ -1,8 +1,11 @@
 import Link from "next/link";
+import { AdminEventSwitcher } from "@/components/admin-event-switcher";
 import { BrandMark } from "@/components/ui";
+import { readDataStore } from "@/lib/data";
 
 const links = [
   ["/admin", "Dashboard"],
+  ["/admin/events", "Events"],
   ["/admin/markets/new", "New market"],
   ["/admin/participants", "Participants"],
   ["/admin/payments", "Payments"],
@@ -14,12 +17,16 @@ const links = [
 ];
 
 function scopedHref(href: string, eventSlug?: string) {
-  if (!eventSlug || href === "/admin") return href;
+  if (!eventSlug || href === "/admin/events") return href;
   const separator = href.includes("?") ? "&" : "?";
   return `${href}${separator}eventSlug=${encodeURIComponent(eventSlug)}`;
 }
 
-export function AdminNav({ eventSlug }: { eventSlug?: string }) {
+export async function AdminNav({ eventSlug }: { eventSlug?: string }) {
+  const store = await readDataStore();
+  const events = store.events
+    .map((event) => ({ slug: event.slug, name: event.name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   return (
     <nav className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-ink px-3 py-2 text-white">
       <div className="flex min-w-0 flex-wrap items-center gap-1">
@@ -34,6 +41,7 @@ export function AdminNav({ eventSlug }: { eventSlug?: string }) {
         ))}
       </div>
       <form action="/api/admin/logout" method="post" className="flex items-center gap-3">
+        <AdminEventSwitcher events={events} currentEventSlug={eventSlug} />
         <span className="font-mono-vota hidden items-center gap-2 text-[10px] font-bold uppercase text-white/45 sm:inline-flex">
           <span className="h-1.5 w-1.5 rounded-full bg-warn" />
           Test mode

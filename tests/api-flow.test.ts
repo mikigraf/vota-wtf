@@ -65,7 +65,7 @@ async function completeParticipantProfile(cookie: string, nickname = "route_buil
       method: "PATCH",
       cookie,
       headers: { "content-type": "application/json", origin: "http://localhost" },
-      body: JSON.stringify({ nickname, role: "builder" })
+      body: JSON.stringify({ nickname, email: `${nickname}@example.test` })
     })
   );
   assert.equal(response.status, 200);
@@ -98,13 +98,13 @@ test("actual route handlers support the Sunday participant checkout loop", async
         method: "PATCH",
         cookie: participantCookie,
         headers: { "content-type": "application/json", origin: "http://localhost" },
-        body: JSON.stringify({ nickname: "demo_druid", role: "builder" })
+        body: JSON.stringify({ nickname: "demo_druid", email: "demo.druid@example.test" })
       })
     );
     assert.equal(profile.status, 200);
     const profileJson = await profile.json();
     assert.equal(profileJson.participant.nickname, "demo_druid");
-    assert.equal(profileJson.participant.role, "builder");
+    assert.equal(profileJson.participant.email, "demo.druid@example.test");
     assert.equal(profileJson.nextMarketId, SEED_IDS.markets.winner);
 
     const editedGeneratedAvatarProfile = await profilePatch(
@@ -114,7 +114,7 @@ test("actual route handlers support the Sunday participant checkout loop", async
         headers: { "content-type": "application/json", origin: "http://localhost" },
         body: JSON.stringify({
           nickname: "demo_druid",
-          role: "sponsor",
+          email: "demo.druid@example.test",
           avatarDataUrl: profileJson.participant.avatarUrl
         })
       })
@@ -134,14 +134,14 @@ test("actual route handlers support the Sunday participant checkout loop", async
         headers: { "content-type": "application/json", origin: "http://localhost" },
         body: JSON.stringify({
           nickname: "demo_druid",
-          role: "builder",
+          email: "demo.druid@example.test",
           avatarDataUrl: "/uploads/avatars/demo-druid.webp"
         })
       })
     );
     assert.equal(editedUploadedAvatarProfile.status, 409);
     assert.match((await editedUploadedAvatarProfile.json()).error, /locked after entering/);
-    assert.equal(readStore().participants.find((item) => item.id === profileJson.participant.id)?.role, "builder");
+    assert.equal(readStore().participants.find((item) => item.id === profileJson.participant.id)?.email, "demo.druid@example.test");
 
     for (const amountCredits of [undefined, "abc", 1.5]) {
       const invalidPrediction = await predictionPost(
@@ -906,7 +906,7 @@ test("moderation ban blocks public profile edits and supporter checkout", async 
         method: "PATCH",
         cookie: participantCookie,
         headers: { "content-type": "application/json", origin: "http://localhost" },
-        body: JSON.stringify({ nickname: "ban_escape", role: "builder" })
+        body: JSON.stringify({ nickname: "ban_escape", email: "ban.escape@example.test" })
       })
     );
     assert.equal(profile.status, 403);
@@ -1080,7 +1080,7 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
         method: "PATCH",
         cookie: participantCookie,
         headers: { "content-type": "application/json", origin: "http://localhost" },
-        body: JSON.stringify({ nickname: "mcp_builder", role: "builder" })
+        body: JSON.stringify({ nickname: "mcp_builder", email: "mcp.builder@example.test" })
       })
     );
     const profileJson = await profile.json();

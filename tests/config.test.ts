@@ -68,7 +68,7 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(readme, /READINESS_URL=https:\/\/your-deploy\.example npm run verify:deploy/);
   assert.match(readme, /READINESS_URL=https:\/\/your-vercel-domain\.example npm run verify:deploy/);
   assert.match(readme, /docs\/live-event-readiness-plan\.md/);
-  assert.match(readme, /034_prediction_serialization_readiness\.sql/);
+  assert.match(readme, /036_admin_event_switcher_seed_events\.sql/);
   assert.match(workflow, /node-version: 22/);
   assert.match(workflow, /npm install/);
   assert.match(workflow, /CI: "false"/);
@@ -78,7 +78,7 @@ test("local Supabase runbook and scripts are wired", () => {
 test("live-event readiness plan captures the manual gates automation cannot prove", () => {
   const plan = fs.readFileSync("docs/live-event-readiness-plan.md", "utf8");
 
-  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/034_prediction_serialization_readiness\.sql` applied/);
+  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/036_admin_event_switcher_seed_events\.sql` applied/);
   assert.match(plan, /Critical Findings/);
   assert.match(plan, /Major Findings/);
   assert.match(plan, /Minor Findings/);
@@ -328,6 +328,8 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     checkoutIntentLinkRpc: true,
     pendingPurchaseRpc: true,
     profileLockRpc: true,
+    participantEmailColumn: true,
+    participantUniqueNameIndex: true,
     poolSettlementRpc: true,
     voidMarketRpc: true,
     transitionMarketRpc: true,
@@ -364,7 +366,7 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     deployEnv,
     "megathon-2026",
     async () => new Response(JSON.stringify({ status: "paid" }), { status: 200 }),
-    { ...contract, contractVersion: "034_prediction_serialization_readiness" }
+    { ...contract, contractVersion: "035_email_unique_names_no_roles" }
   );
   assert.equal(currentContract.ready, true);
 });

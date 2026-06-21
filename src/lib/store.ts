@@ -47,7 +47,7 @@ import type {
   UserMarketState,
   Wallet
 } from "./types";
-import { clamp, makeId, normalizeNickname, normalizeRole, nowIso } from "./utils";
+import { clamp, isValidEmail, makeId, normalizeEmail, normalizeNickname, normalizeRole, nowIso } from "./utils";
 
 const defaultDataDir = path.join(process.cwd(), ".data");
 const defaultDataFile = path.join(defaultDataDir, "vota-dev-store.json");
@@ -408,6 +408,26 @@ export function createSeedStore(): Store {
       stageMode: "live",
       featuredMarketId: SEED_IDS.markets.livestream,
       createdAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000901",
+      slug: "megathon",
+      name: "megathon",
+      status: "live",
+      starterCredits: STARTER_CREDITS,
+      emergencyPaused: false,
+      stageMode: "join",
+      createdAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000000902",
+      slug: "testingmiki",
+      name: "testingmiki",
+      status: "live",
+      starterCredits: STARTER_CREDITS,
+      emergencyPaused: false,
+      stageMode: "join",
+      createdAt: now
     }
   ];
   const store: Store = {
@@ -575,16 +595,29 @@ export function createParticipantSession(store: Store, eventSlug = DEFAULT_EVENT
 export function updateParticipantProfile(
   store: Store,
   participantId: string,
-  input: { nickname: string; role: string; avatarUrl?: string }
+  input: { nickname: string; email?: string; role?: string; avatarUrl?: string }
 ) {
   const participant = store.participants.find((item) => item.id === participantId);
   if (!participant) throw new Error("Participant not found");
   if (participant.participantType === "human" && hasCompletedProfile(participant)) {
     throw new Error("Profile is locked after entering the arena.");
   }
+  const nickname = normalizeNickname(input.nickname);
+  const email = normalizeEmail(input.email || "");
+  if (!nickname || nickname === "oracle") throw new Error("Enter a stage name before joining.");
+  if (!isValidEmail(email)) throw new Error("Enter your email address before joining.");
+  const duplicate = store.participants.find(
+    (item) =>
+      item.id !== participant.id &&
+      item.eventId === participant.eventId &&
+      item.participantType === "human" &&
+      item.nickname.trim().toLowerCase() === nickname.toLowerCase()
+  );
+  if (duplicate) throw new Error("That stage name is already taken.");
   const previousRole = participant.role;
-  participant.nickname = normalizeNickname(input.nickname);
-  participant.role = normalizeRole(input.role);
+  participant.nickname = nickname;
+  participant.email = email;
+  participant.role = normalizeRole(input.role || "other");
   if (input.avatarUrl) participant.avatarUrl = input.avatarUrl;
   if (previousRole !== participant.role) {
     const marketIds = new Set(

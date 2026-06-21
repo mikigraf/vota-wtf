@@ -55,6 +55,6 @@ test("MCP endpoint keeps a small non-admin tool surface", () => {
     "request_more_budget"
   ]);
   assert.doesNotMatch(route, /buy_tokens|resolve_market|create_market|adjust_ledger|execute_sql/);
-  assert.match(route, /market\.status === "open" && \(!session \|\| market\.eventId === session\.participant\.eventId\)/);
+  assert.match(route, /market\.status === "open" && Boolean\(visibleEventId\) && market\.eventId === visibleEventId/);
   assert.match(route, /visibleOpenMarkets\.find\(\(item\) => item\.id === body\.marketId\)/);
 });

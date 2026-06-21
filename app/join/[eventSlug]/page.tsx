@@ -47,15 +47,14 @@ export default async function JoinPage({
           </div>
           <h1 className="font-expanded mt-2 text-2xl font-black sm:mt-4 sm:text-4xl">Join the arena</h1>
           <p className="mt-3 hidden text-sm font-semibold leading-5 text-muted sm:block">
-            Choose a stage name and role. Add a photo if you want; otherwise vota.wtf makes an avatar for you.
+            Choose a unique stage name and add your email. Add a photo if you want; otherwise vota.wtf makes an avatar for you.
           </p>
           <div className="mt-3 sm:mt-6">
             <JoinForm
               eventSlug={eventSlug}
               initialNickname={session?.participant.nickname}
-              initialRole={session?.participant.role}
+              initialEmail={session?.participant.email}
               initialAvatarUrl={session?.participant.avatarUrl}
-              initialProfileComplete={hasCompletedProfile(session?.participant)}
               nextPath={nextPath}
             />
           </div>

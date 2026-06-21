@@ -27,6 +27,7 @@ export interface Participant {
   eventId: string;
   participantType: ParticipantType;
   nickname: string;
+  email?: string;
   role: Role;
   avatarUrl?: string;
   isAvatarHidden: boolean;

@@ -2,14 +2,12 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ROLE_LABELS } from "@/lib/constants";
 
 type JoinFormProps = {
   eventSlug: string;
   initialNickname?: string;
-  initialRole?: string;
+  initialEmail?: string;
   initialAvatarUrl?: string;
-  initialProfileComplete?: boolean;
   nextPath?: string;
 };
 
@@ -30,11 +28,6 @@ function initialName(value?: string) {
   return value;
 }
 
-function initialRoleValue(value?: string, hasCompletedProfile?: boolean) {
-  if (!value || !hasCompletedProfile) return "";
-  return value;
-}
-
 function safeClientNextPath(value?: string) {
   if (!value || !value.startsWith("/") || value.startsWith("//")) return "";
   if (value.startsWith("/admin") || value.startsWith("/api")) return "";
@@ -44,14 +37,13 @@ function safeClientNextPath(value?: string) {
 export function JoinForm({
   eventSlug,
   initialNickname,
-  initialRole,
+  initialEmail,
   initialAvatarUrl,
-  initialProfileComplete,
   nextPath
 }: JoinFormProps) {
   const router = useRouter();
   const [nickname, setNickname] = useState(initialName(initialNickname));
-  const [role, setRole] = useState(initialRoleValue(initialRole, initialProfileComplete));
+  const [email, setEmail] = useState(initialEmail || "");
   const [avatarPreviewUrl, setAvatarPreviewUrl] = useState(initialAvatarUrl || "");
   const [newAvatarDataUrl, setNewAvatarDataUrl] = useState("");
   const [error, setError] = useState("");
@@ -85,7 +77,7 @@ export function JoinForm({
       const response = await fetch("/api/session/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ nickname, role, avatarDataUrl: newAvatarDataUrl })
+        body: JSON.stringify({ nickname, email, avatarDataUrl: newAvatarDataUrl })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not join.");
@@ -113,28 +105,23 @@ export function JoinForm({
         />
       </label>
       <label className="grid gap-2 text-sm font-extrabold">
-        Role
-        <select
+        Email
+        <input
           className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
-          value={role}
-          onChange={(event: any) => setRole(event.target.value)}
+          type="email"
+          value={email}
+          onChange={(event: any) => setEmail(event.target.value)}
+          maxLength={254}
+          autoComplete="email"
+          placeholder="you@example.com"
           required
-        >
-          <option value="" disabled>
-            Choose your role
-          </option>
-          {Object.entries(ROLE_LABELS).map(([value, label]) => (
-            <option key={value} value={value}>
-              {label}
-            </option>
-          ))}
-        </select>
+        />
       </label>
       {error ? <p className="rounded-xl bg-danger/10 p-3 text-sm font-semibold text-danger">{error}</p> : null}
       <button
         data-testid="join-submit"
         className="focus-ring min-h-12 rounded-full bg-ink px-4 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-60 sm:order-last"
-        disabled={busy || !nickname.trim() || !role}
+        disabled={busy || !nickname.trim() || !email.trim()}
       >
         {busy ? "Joining..." : "Enter the markets"}
       </button>

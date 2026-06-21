@@ -57,8 +57,8 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
   const [showAgentLayer, setShowAgentLayer] = useState(false);
   const [pulseKey, setPulseKey] = useState(0);
   const [refreshFailed, setRefreshFailed] = useState(false);
-  const lastResolved = useRef<string | undefined>();
-  const lastSignalSignature = useRef<string | undefined>();
+  const lastResolved = useRef<string | undefined>(undefined);
+  const lastSignalSignature = useRef<string | undefined>(undefined);
   const stageMarkets = useMemo(() => state.markets.filter((item) => item.status !== "voided" && item.showOnStage), [state.markets]);
   const market = useMemo(
     () => stageMarkets.find((item) => item.id === state.event.featuredMarketId) || stageMarkets[0],

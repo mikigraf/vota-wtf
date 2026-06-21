@@ -51,16 +51,33 @@ function seedFreshRooms() {
   expect(result.status).toBe(0);
 }
 
-async function joinRoom(browser: Browser, roomSlug: string, name: string, role: "builder" | "sponsor" | "investor" | "other"): Promise<JoinedUser> {
+function emailForName(name: string) {
+  return `${name.toLowerCase().replace(/[^a-z0-9]+/g, ".").replace(/^\.+|\.+$/g, "")}@e2e.test`;
+}
+
+async function joinRoom(browser: Browser, roomSlug: string, name: string, email = emailForName(name)): Promise<JoinedUser> {
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto(`/join/${roomSlug}`);
+  await expect(page.getByLabel("Role")).toHaveCount(0);
   await page.getByLabel("Stage name").fill(name);
-  await page.getByLabel("Role").selectOption(role);
+  await expect(page.getByRole("button", { name: "Enter the markets" })).toBeDisabled();
+  await page.getByLabel("Email").fill(email);
   await page.getByRole("button", { name: "Enter the markets" }).click();
   await expect(page).toHaveURL(/\/m\/|\/e\//);
   await expect(page.getByText(name).or(page.getByText(/Prediction|Live room/))).toBeVisible();
   return { context, page };
+}
+
+async function expectDuplicateNameBlocked(browser: Browser, roomSlug: string, name: string) {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(`/join/${roomSlug}`);
+  await page.getByLabel("Stage name").fill(name);
+  await page.getByLabel("Email").fill(`duplicate.${emailForName(name)}`);
+  await page.getByRole("button", { name: "Enter the markets" }).click();
+  await expect(page.getByText(/stage name is already taken/i)).toBeVisible();
+  await context.close();
 }
 
 async function pickOutcome(page: Page, outcomeLabel: string, amount = 100) {
@@ -87,9 +104,16 @@ test.describe("local Supabase live event flows", () => {
   });
 
   test("multiple people join Megathon, wager, top up, resolve, and get receipts", async ({ browser }) => {
-    const orbit = await joinRoom(browser, "megathon", "Orbit Caller", "builder");
-    const nova = await joinRoom(browser, "megathon", "Nova Caller", "sponsor");
-    const talk = await joinRoom(browser, "megatalkTesting", "Talk Tester", "investor");
+    const orbit = await joinRoom(browser, "megathon", "Orbit Caller");
+    const nova = await joinRoom(browser, "megathon", "Nova Caller");
+    const talk = await joinRoom(browser, "megatalkTesting", "Talk Tester");
+    await expectDuplicateNameBlocked(browser, "megathon", "Orbit Caller");
+
+    const lockedProfile = await orbit.page.request.patch("/api/session/profile", {
+      data: { nickname: "Orbit Edited", email: "orbit.edited@e2e.test", role: "other" }
+    });
+    expect(lockedProfile.status()).toBe(409);
+    await expect(orbit.page.getByText("Orbit Edited")).toHaveCount(0);
 
     await expect(orbit.page.getByRole("heading", { name: /Who wins Megathon/ })).toBeVisible();
     await pickOutcome(orbit.page, "Team Orbit");
@@ -159,7 +183,7 @@ test.describe("local Supabase live event flows", () => {
     await admin.getByLabel("Emergency pause sensitive user actions").check();
     await admin.getByRole("button", { name: "Update stage" }).click();
 
-    const participant = await joinRoom(browser, "megatalkTesting", "Paused Player", "other");
+    const participant = await joinRoom(browser, "megatalkTesting", "Paused Player");
     await participant.page.goto("/e/megatalkTesting");
     await expect(participant.page.getByText("Predictions are paused")).toBeVisible();
 

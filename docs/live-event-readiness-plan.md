@@ -6,8 +6,9 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 
 - `npm test`, `npm run lint`, `npm run build`, and local `npm run readiness` are the required code gates.
 - `npm run load:500` is the local engine load gate for 500 participant/profile/prediction flows, idempotency replays, and winner-pool settlement math.
+- `npm run e2e:local` is the local Supabase browser gate. It resets local Supabase, seeds `Megathon` and `megatalkTesting`, starts Next on `127.0.0.1:3100`, and runs desktop plus Pixel 7 Playwright flows.
 - `npm run verify:deploy` is the required deployed gate. It fails unless `READINESS_URL` points at the deployed origin or `/api/readiness`.
-- Supabase production must have every migration through `supabase/migrations/034_prediction_serialization_readiness.sql` applied.
+- Supabase production must have every migration through `supabase/migrations/036_admin_event_switcher_seed_events.sql` applied.
 - This sandbox cannot bind `127.0.0.1:3000`, so local browser and mobile screenshots are not sufficient evidence here.
 
 ## Critical Findings
@@ -38,6 +39,9 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 | MCP token scope | Admin can still create broad MCP tokens that are easy to misuse during a live demo. | Agents should not accidentally trade as the wrong human or fail headless demos. | Prefer participant-scoped tokens for demos. Future hardening should reject global tokens for `place_prediction` unless explicitly marked headless-agent-only. |
 | Payment status audit | Failed/canceled payment status changes previously had weaker local audit coverage than credited payments. | Operators need a complete audit trail after the event. | Local and Supabase settlement paths now write `payment_status` audit rows for failed/canceled transitions. Before doors open, force one failed/canceled test checkout and confirm `/admin/audit` records it without issuing MegaBucks. |
 | Deployed readiness proof | A green local build does not prove public QR, checkout callback, admin, and stage URLs. | The event operator needs external proof links before doors open. | Set all `NEXT_PUBLIC_PROOF_*` URLs and run `READINESS_URL=https://<domain> npm run verify:deploy`. |
+| Production-path load proof | `npm run load:500` exercises the market engine locally, not HTTP routes or Supabase RPCs under concurrent request pressure. | A local engine p99 is useful, but it does not prove the deployed stack can absorb a 500-person room. | Add a `load:500:supabase` or HTTP load script that creates sessions, completes profiles, places concurrent predictions with idempotency retries, runs a subset of checkouts, then locks/resolves through admin/API paths and verifies ledger/aggregate invariants. |
+| Participant moderation transaction | Supabase participant moderation still uses snapshot patching rather than one transactional RPC. | A ban/hide/rename during active betting should update participant state and affected aggregates atomically. | Add `moderate_participant_tx(participant_id, action, nickname, ip)` with row locks and in-transaction aggregate recompute, route `/api/admin/participants` through it, and add readiness/static coverage. |
+| MCP read scoping | Unauthenticated MCP market reads previously enumerated every open event. | Side-event or test-room market metadata should not leak through default agent discovery. | MCP read-only tools now scope unauthenticated reads to `eventSlug` or the configured default event, while participant tokens stay scoped to their participant event. Route-handler coverage verifies default and explicit event behavior. |
 
 ## Minor Findings
 
@@ -46,6 +50,8 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 | Copy clarity | Whale Guard and blind launch copy should explain caps without raw errors. | Try first prediction, add-on, cooldown, and blocked large action on mobile. |
 | Receipt wrapping | Long team names, handles, and share URLs should wrap instead of overflowing. | Create one long-name receipt and view it on a narrow phone. |
 | Admin situational awareness | Operators need a fast way to see readiness, audit log, participants, payments, and stage mode. | Keep `/admin/readiness`, `/admin/audit`, `/admin/participants`, `/admin/payments`, and `/admin/stage` open in separate tabs. |
+| Mobile market discovery | Mobile event home should expose the next several open cards without requiring a disclosure tap. | Current mobile event home shows the top three sorted markets by default, then collapses only the remainder. Validate with the real event market count. |
+| Persistent stage QR | The stage QR should remain legible outside join mode. | Persistent stage QR is enlarged; still validate from the back of the room on the actual projector. |
 
 ## Systemic Patterns
 
@@ -59,10 +65,11 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 
 1. Apply Supabase migrations through `034` and run `npm run verify:deploy` against the deployed domain.
 2. Run `npm run load:500` locally before the final deploy to confirm the market engine can process 500 participant journeys, idempotent retries, and winner-pool settlement.
-3. Run the critical smoke flow with two phones and one laptop: join, profile, predict, switch, blocked cap, checkout, void redirect, lock, resolve, receipt, leaderboard, and stage reveal.
-4. Run the admin operator flow: login, create/open/feature/lock/resolve/void a throwaway market, switch all stage modes, inspect audit logs, and reconcile payments.
-5. Run the projector flow: `/stage/megathon-2026` on the real screen, QR scan from the back of the room, live updates, blind launch unlock, role battle, humans vs agents, leaderboard, and resolution reveal.
-6. Freeze market content and environment variables. After freeze, only fix P0/P1 regressions found during the smoke run.
+3. Run `npm run e2e:local` on a machine with Docker, local Supabase, and Playwright browsers installed or installable.
+4. Run the critical smoke flow with two phones and one laptop: join, profile, predict, switch, blocked cap, checkout, void redirect, lock, resolve, receipt, leaderboard, and stage reveal.
+5. Run the admin operator flow: login, create/open/feature/lock/resolve/void a throwaway market, switch all stage modes, inspect audit logs, and reconcile payments.
+6. Run the projector flow: `/stage/megathon-2026` on the real screen, QR scan from the back of the room, live updates, blind launch unlock, role battle, humans vs agents, leaderboard, and resolution reveal.
+7. Freeze market content and environment variables. After freeze, only fix P0/P1 regressions found during the smoke run.
 
 ## Parallel Work
 
@@ -77,6 +84,7 @@ Go live only when:
 
 - `npm run verify:deploy` passes against the public domain.
 - `npm run load:500` passes locally.
+- `npm run e2e:local` passes against local Supabase on desktop and mobile Playwright projects.
 - `/admin/readiness` has no failed checks.
 - At least two real mobile devices complete the participant smoke flow.
 - Admin can resolve a throwaway market and settlement appears in leaderboard/receipt.

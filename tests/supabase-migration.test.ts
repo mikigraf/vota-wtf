@@ -35,6 +35,9 @@ const stageSafeFallbackMigration = fs.readFileSync("supabase/migrations/031_stag
 const platformSignalPriorsMigration = fs.readFileSync("supabase/migrations/032_platform_signal_priors.sql", "utf8");
 const finalHardeningMigration = fs.readFileSync("supabase/migrations/033_live_event_final_hardening.sql", "utf8");
 const predictionSerializationMigration = fs.readFileSync("supabase/migrations/034_prediction_serialization_readiness.sql", "utf8");
+const profileIdentityMigration = fs.readFileSync("supabase/migrations/035_email_unique_names_no_roles.sql", "utf8");
+const eventSwitcherMigration = fs.readFileSync("supabase/migrations/036_admin_event_switcher_seed_events.sql", "utf8");
+const storeLayer = fs.readFileSync("src/lib/store.ts", "utf8");
 const dataLayer = fs.readFileSync("src/lib/data.ts", "utf8");
 const marketForm = fs.readFileSync("components/market-form.tsx", "utf8");
 const marketUpdateRoute = fs.readFileSync("app/api/admin/markets/[id]/route.ts", "utf8");
@@ -70,6 +73,8 @@ const mcpTokenForm = fs.readFileSync("components/mcp-token-form.tsx", "utf8");
 const mcpTokenRoute = fs.readFileSync("app/api/admin/mcp-tokens/route.ts", "utf8");
 const ensureAgentsRoute = fs.readFileSync("app/api/admin/agents/ensure/route.ts", "utf8");
 const eventAdminPage = fs.readFileSync("app/admin/events/[slug]/page.tsx", "utf8");
+const eventsAdminPage = fs.readFileSync("app/admin/events/page.tsx", "utf8");
+const adminEventSwitcher = fs.readFileSync("components/admin-event-switcher.tsx", "utf8");
 const adminReportPage = fs.readFileSync("app/admin/report/page.tsx", "utf8");
 const adminReportRoute = fs.readFileSync("app/api/admin/report/route.ts", "utf8");
 const buildPage = fs.readFileSync("app/build/page.tsx", "utf8");
@@ -283,10 +288,16 @@ test("mobile prediction journey avoids accidental commits and nested checkout su
   assert.match(joinForm, /Add photo optional/);
   assert.match(joinForm, /sm:order-last/);
   assert.doesNotMatch(joinForm, /capture="user"/);
-  assert.match(joinPage, /initialProfileComplete=\{hasCompletedProfile\(session\?\.participant\)\}/);
-  assert.match(joinForm, /initialRoleValue\(initialRole, initialProfileComplete\)/);
-  assert.match(joinForm, /Choose your role/);
-  assert.match(joinForm, /disabled=\{busy \|\| !nickname\.trim\(\) \|\| !role\}/);
+  assert.match(joinPage, /initialEmail=\{session\?\.participant\.email\}/);
+  assert.match(joinForm, /type="email"/);
+  assert.match(joinForm, /autoComplete="email"/);
+  assert.doesNotMatch(joinForm, /initialRoleValue|Choose your role|ROLE_LABELS/);
+  assert.match(joinForm, /disabled=\{busy \|\| !nickname\.trim\(\) \|\| !email\.trim\(\)\}/);
+  assert.match(profileRoute, /Enter your email address before joining/);
+  assert.match(profileRoute, /role = "other"/);
+  assert.match(profileIdentityMigration, /add column if not exists email text/);
+  assert.match(profileIdentityMigration, /participants_event_human_nickname_unique_idx/);
+  assert.match(profileIdentityMigration, /p_email text/);
   assert.match(joinForm, /newAvatarDataUrl/);
   assert.match(joinForm, /avatarPreviewUrl/);
   assert.match(profileRoute, /submittedAvatar\.startsWith\("data:image\/"\)/);
@@ -766,10 +777,12 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
   assert.match(featureStageGuardMigration, /v_market\.status in \('draft', 'voided'\)/);
 });
 
-test("public pages expose role boards and market hero imagery", () => {
-  for (const title of ["Builders", "Sponsors", "Investors", "Other", "Early callers", "Contrarian calls"]) {
+test("public pages expose score boards and market hero imagery", () => {
+  for (const title of ["Early callers", "Contrarian calls"]) {
     assert.match(eventPage, new RegExp(`title="${title}"`));
   }
+  assert.doesNotMatch(eventPage, /title="Builders"|title="Sponsors"|title="Investors"|title="Other"/);
+  assert.match(eventPage, /LIVE ODDS/);
   assert.match(stageView, /StageBoard title="Builders"/);
   assert.match(stageView, /StageBoard title="Sponsors"/);
   assert.match(stageView, /StageBoard title="Investors"/);
@@ -818,6 +831,16 @@ test("admin control surfaces avoid GET writes and expose proof/control affordanc
   assert.match(agentsPage, /MCP token created/);
   assert.match(participantsRoute, /adminActionError\(request, returnTo/);
   assert.match(participantsPage, /Participant update failed/);
+  assert.match(eventSwitcherMigration, /'megathon', 'megathon'/);
+  assert.match(eventSwitcherMigration, /'testingmiki', 'testingmiki'/);
+  assert.match(storeLayer, /slug: "megathon"/);
+  assert.match(storeLayer, /slug: "testingmiki"/);
+  assert.match(adminNav, /AdminEventSwitcher/);
+  assert.match(adminNav, /\["\/admin\/events", "Events"\]/);
+  assert.match(adminEventSwitcher, /params\.set\("eventSlug", slug\)/);
+  assert.match(adminEventSwitcher, /router\.push\(`\/admin\/events\/\$\{encodeURIComponent\(slug\)\}`\)/);
+  assert.match(eventsAdminPage, /All rooms/);
+  assert.match(eventsAdminPage, /Public room/);
   assert.match(eventAdminPage, /Control room/);
   assert.match(eventAdminPage, /Stage quick controls/);
   assert.match(eventAdminPage, /AdminLiveRefresh/);
