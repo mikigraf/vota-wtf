@@ -30,7 +30,7 @@
     "verify:local:supabase": "npm run env:local:supabase && VOTA_DATA_BACKEND=supabase npm run verify"
   },
   "dependencies": {
-    "next": "15.1.7",
+    "next": "15.1.11",
     "react": "19.0.0",
     "react-dom": "19.0.0"
   },
