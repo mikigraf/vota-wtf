@@ -52,6 +52,8 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(e2eRunner, /supabase", \["db", "reset"\]/);
   assert.match(e2eRunner, /scripts\/seed-e2e\.ts/);
   assert.match(e2eRunner, /PLAYWRIGHT_BASE_URL: "http:\/\/127\.0\.0\.1:3100"/);
+  assert.match(playwrightConfig, /readEnvFile\(path\.join\(process\.cwd\(\), "\.env\.local"\)\)/);
+  assert.match(playwrightConfig, /\.\.\.localEnv,[\s\S]+\.\.\.process\.env/);
   assert.match(e2eSeed, /slug: "megathon"/);
   assert.match(e2eSeed, /name: "Megathon"/);
   assert.match(e2eSeed, /slug: "megatalkTesting"/);

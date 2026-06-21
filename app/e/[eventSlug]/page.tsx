@@ -150,7 +150,7 @@ export default async function EventPage({
                 <h1 className="line-clamp-2 text-sm font-black leading-tight sm:text-xl">
                   {heroMarket ? heroMarket.title : "Markets opening soon"}
                 </h1>
-                <p className="mt-0.5 truncate text-xs font-bold text-muted sm:text-sm">
+                <p className="mt-0.5 line-clamp-2 text-xs font-bold leading-tight text-muted sm:text-sm">
                   {heroMarket
                     ? heroMarket.status === "locked"
                       ? "Predictions locked. Watch the reveal."

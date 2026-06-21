@@ -20,8 +20,8 @@ export function PublicEventLive({
   const [state, setState] = useState(initialState);
   const featuredMarketId = state.event.featuredMarketId;
   const markets = useMemo(() => [...state.markets].sort((a, b) => compareMarketForParticipant(a, b, featuredMarketId)), [state.markets, featuredMarketId]);
-  const mobilePrimaryMarkets = markets.slice(0, 1);
-  const mobileMoreMarkets = markets.slice(1);
+  const mobilePrimaryMarkets = markets.slice(0, 3);
+  const mobileMoreMarkets = markets.slice(3);
 
   useEffect(() => {
     let cancelled = false;

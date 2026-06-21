@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getMcpSessionParticipantData, placePredictionData, readDataStore, verifyMcpWriteTokenData } from "@/lib/data";
+import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { badRequest, json } from "@/lib/http";
 import { calculateAllowedStake, publicMarketState } from "@/lib/store";
 
@@ -22,10 +23,12 @@ const toolDefinitions = [
   {
     name: "list_markets",
     title: "List open prediction markets",
-    description: "Returns open vota.wtf prediction markets with public outcomes and current room signal. When authenticated, results are scoped to the participant's event.",
+    description: "Returns open vota.wtf prediction markets with public outcomes and current room signal. When authenticated, results are scoped to the participant's event. Without authentication, pass eventSlug or use the configured default event.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        eventSlug: { type: "string", description: "Optional event slug for unauthenticated read-only market discovery." }
+      },
       additionalProperties: false
     },
     annotations: { readOnlyHint: true }
@@ -37,7 +40,8 @@ const toolDefinitions = [
     inputSchema: {
       type: "object",
       properties: {
-        marketId: { type: "string", description: "The prediction market id." }
+        marketId: { type: "string", description: "The prediction market id." },
+        eventSlug: { type: "string", description: "Optional event slug for unauthenticated reads." }
       },
       required: ["marketId"],
       additionalProperties: false
@@ -241,8 +245,12 @@ async function runTool(request: NextRequest, tool: string, args: JsonRecord) {
   const body = args;
   const store = await readDataStore();
   const session = await getMcpSessionParticipantData(request);
+  const requestedEventSlug = typeof body.eventSlug === "string" ? body.eventSlug.trim() : "";
+  const readOnlyEventSlug = requestedEventSlug || process.env.NEXT_PUBLIC_EVENT_SLUG || DEFAULT_EVENT_SLUG;
+  const readOnlyEvent = store.events.find((event) => event.slug === readOnlyEventSlug);
+  const visibleEventId = session?.participant.eventId || readOnlyEvent?.id;
   const visibleOpenMarkets = store.markets.filter((market) => {
-    return market.status === "open" && (!session || market.eventId === session.participant.eventId);
+    return market.status === "open" && Boolean(visibleEventId) && market.eventId === visibleEventId;
   });
   if (tool === "list_markets") {
     return { markets: visibleOpenMarkets.map((market) => publicMarketState(store, market)) };

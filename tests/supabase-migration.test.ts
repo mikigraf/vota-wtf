@@ -225,7 +225,7 @@ test("mobile prediction journey avoids accidental commits and nested checkout su
   assert.match(predictionPanel, /showMobileSupportControls/);
   assert.match(predictionPanel, /setShowMobileCustom/);
   assert.match(predictionPanel, /showMobileLockedPosition/);
-  assert.match(predictionPanel, /Edit prediction/);
+  assert.match(predictionPanel, /Add or switch/);
   assert.match(predictionPanel, /Editing current prediction/);
   assert.match(predictionPanel, /Cancel/);
   assert.match(predictionPanel, /preview\.before\.stageSignal/);
@@ -263,8 +263,8 @@ test("mobile prediction journey avoids accidental commits and nested checkout su
   assert.match(eventPage, /showMobileTopUp/);
   assert.match(publicEventLive, /mb-3 hidden flex-wrap/);
   assert.match(publicEventLive, /grid gap-1 sm:hidden/);
-  assert.match(publicEventLive, /mobilePrimaryMarkets = markets\.slice\(0, 1\)/);
-  assert.match(publicEventLive, /mobileMoreMarkets = markets\.slice\(1\)/);
+  assert.match(publicEventLive, /mobilePrimaryMarkets = markets\.slice\(0, 3\)/);
+  assert.match(publicEventLive, /mobileMoreMarkets = markets\.slice\(3\)/);
   assert.match(publicEventLive, /compareMarketForParticipant/);
   assert.match(publicEventLive, /leadingOutcome/);
   assert.match(publicEventLive, /grid grid-cols-\[92px_minmax\(0,1fr\)\] sm:block/);
@@ -778,10 +778,12 @@ test("public pages expose role boards and market hero imagery", () => {
   assert.match(eventPage, /participantOrderedMarkets = \[\.\.\.state\.markets\]\.sort\(\(a, b\) => compareMarketForParticipant\(a, b, state\.event\.featuredMarketId\)\)/);
   assert.match(eventPage, /openFeaturedMarket \|\| nextOpenMarket \|\| featuredVisibleMarket/);
   assert.match(eventPage, /showMobileTopUp/);
+  assert.match(eventPage, /line-clamp-2 text-xs font-bold leading-tight text-muted/);
   assert.match(publicEventLive, /featuredMarketId = state\.event\.featuredMarketId/);
   assert.match(publicEventLive, /compareMarketForParticipant\(a, b, featuredMarketId\)/);
   assert.match(publicEventLive, /statusDelta !== 0/);
   assert.match(publicEventLive, /markets\.map/);
+  assert.match(publicEventLive, /mobilePrimaryMarkets = markets\.slice\(0, 3\)/);
   assert.match(publicEventLive, /mobilePrimaryMarkets\.map/);
   assert.match(publicEventLive, /Markets are loading/);
   assert.match(publicEventLive, /Predictions paused/);
@@ -789,8 +791,12 @@ test("public pages expose role boards and market hero imagery", () => {
   assert.match(publicMarketPage, /item\.id === marketId && item\.status !== "draft" && item\.status !== "voided"/);
   assert.match(predictRoute, /item\.id === id && item\.status !== "draft" && item\.status !== "voided"/);
   assert.match(predictionPanel, /router\.replace\(`\/e\/\$\{eventSlug\}`\)/);
+  assert.match(predictionPanel, /Add or switch/);
+  assert.match(predictionPanel, /Wallet \{user\.wallet \? mbucks\(user\.wallet\.balanceCredits\) : "Join first"\}/);
   assert.match(publicMarketPage, /initialEmergencyPaused=\{Boolean\(event\?\.emergencyPaused\)\}/);
   assert.match(publicMarketPage, /<img src=\{state\.imageUrl\}/);
+  assert.match(stageView, /max-w-\[220px\]/);
+  assert.match(localCheckoutPage, /100dvh/);
 });
 
 test("admin control surfaces avoid GET writes and expose proof/control affordances", () => {
@@ -831,7 +837,9 @@ test("admin control surfaces avoid GET writes and expose proof/control affordanc
   assert.match(middleware, /sameOriginAdminMutation/);
   assert.match(middleware, /return NextResponse\.json\(\{ error: "Forbidden" \}, \{ status: 403 \}\)/);
   assert.match(dataLayer, /process\.env\.NODE_ENV !== "production" && verifyBearerToken/);
-  assert.match(mcpRoute, /market\.status === "open" && \(!session \|\| market\.eventId === session\.participant\.eventId\)/);
+  assert.match(mcpRoute, /const readOnlyEventSlug = requestedEventSlug \|\| process\.env\.NEXT_PUBLIC_EVENT_SLUG \|\| DEFAULT_EVENT_SLUG/);
+  assert.match(mcpRoute, /const visibleEventId = session\?\.participant\.eventId \|\| readOnlyEvent\?\.id/);
+  assert.match(mcpRoute, /market\.status === "open" && Boolean\(visibleEventId\) && market\.eventId === visibleEventId/);
   assert.match(mcpRoute, /visibleOpenMarkets\.find\(\(item\) => item\.id === body\.marketId\)/);
 });
 

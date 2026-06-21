@@ -458,7 +458,7 @@ function StageFrame({
       data-stale={stale ? "true" : "false"}
     >
       <div className="mx-auto max-w-7xl">
-        <div className="mb-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_180px] lg:items-start">
+        <div className="mb-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
           <div>
             <h1 className="font-expanded break-words text-5xl font-black leading-none sm:text-7xl lg:text-8xl">{title}</h1>
             <p className="mt-4 break-words text-xl font-bold text-muted sm:text-2xl">{subtitle}</p>
@@ -483,11 +483,11 @@ function StageFrame({
 
 function CompactStageQr({ joinUrl }: { joinUrl: string }) {
   return (
-    <div className="rounded-2xl border border-line bg-white p-3 shadow-panel">
-      <div className="mx-auto max-w-[132px]">
+    <div className="rounded-2xl border border-line bg-white p-4 shadow-panel">
+      <div className="mx-auto max-w-[220px]">
         <QrCode value={joinUrl} title="Join vota.wtf QR code" />
       </div>
-      <p className="font-mono-vota mt-2 break-all text-center text-[10px] font-black uppercase text-faded">
+      <p className="font-mono-vota mt-3 break-all text-center text-xs font-black uppercase text-faded">
         Join {joinUrl.replace(/^https?:\/\//, "")}
       </p>
     </div>

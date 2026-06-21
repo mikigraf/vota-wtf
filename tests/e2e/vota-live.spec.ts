@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 type JoinedUser = {
@@ -6,13 +8,37 @@ type JoinedUser = {
   page: Page;
 };
 
-const adminPassword = process.env.ADMIN_PASSWORD || "local-admin-password";
+function readEnvFile(filePath: string) {
+  if (!fs.existsSync(filePath)) return {};
+  const env: Record<string, string> = {};
+  const contents = fs.readFileSync(filePath, "utf8");
+  for (const line of contents.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const separator = trimmed.indexOf("=");
+    if (separator < 0) continue;
+    const key = trimmed.slice(0, separator);
+    let value = trimmed.slice(separator + 1);
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
+const localEnv = readEnvFile(path.join(process.cwd(), ".env.local"));
+const adminPassword = process.env.ADMIN_PASSWORD || localEnv.ADMIN_PASSWORD || "local-admin-password";
 const megathonWinnerMarketId = "00000000-0000-4000-8000-000000000201";
 
 function seedFreshRooms() {
   const result = spawnSync(process.execPath, ["-r", "./tests/register-ts.cjs", "scripts/seed-e2e.ts"], {
     cwd: process.cwd(),
     env: {
+      ...localEnv,
       ...process.env,
       NEXT_PUBLIC_EVENT_SLUG: "megathon",
       VOTA_DATA_BACKEND: "supabase",

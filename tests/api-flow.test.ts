@@ -1060,9 +1060,11 @@ test("Mollie verification recovers a paid checkout whose payment id was not atta
 test("admin can provision a scoped MCP token for external prediction tools", async () => {
   const previousBackend = process.env.VOTA_DATA_BACKEND;
   const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const previousEventSlug = process.env.NEXT_PUBLIC_EVENT_SLUG;
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-mcp-flow-"));
   process.env.VOTA_DATA_BACKEND = "local";
   process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  process.env.NEXT_PUBLIC_EVENT_SLUG = "megathon-2026";
   try {
     writeStore(createSeedStore());
     const init = await initSessionPost(
@@ -1192,6 +1194,42 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     assert.ok(scopedMarketIds.includes(SEED_IDS.markets.winner));
     assert.equal(scopedMarketIds.includes(SEED_IDS.markets.livestream), false);
 
+    const unauthDefaultMarkets = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "markets-default-event-1",
+          method: "tools/call",
+          params: { name: "list_markets", arguments: {} }
+        })
+      })
+    );
+    assert.equal(unauthDefaultMarkets.status, 200);
+    const unauthDefaultJson = await unauthDefaultMarkets.json();
+    const unauthDefaultIds = unauthDefaultJson.result.structuredContent.markets.map((market: { id: string }) => market.id);
+    assert.ok(unauthDefaultIds.includes(SEED_IDS.markets.winner));
+    assert.equal(unauthDefaultIds.includes(SEED_IDS.markets.livestream), false);
+
+    const unauthSideEventMarkets = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "markets-side-event-1",
+          method: "tools/call",
+          params: { name: "list_markets", arguments: { eventSlug: "livestream-demo" } }
+        })
+      })
+    );
+    assert.equal(unauthSideEventMarkets.status, 200);
+    const unauthSideEventJson = await unauthSideEventMarkets.json();
+    const unauthSideEventIds = unauthSideEventJson.result.structuredContent.markets.map((market: { id: string }) => market.id);
+    assert.ok(unauthSideEventIds.includes(SEED_IDS.markets.livestream));
+    assert.equal(unauthSideEventIds.includes(SEED_IDS.markets.winner), false);
+
     const crossEventMarket = await mcpPost(
       request("http://localhost/mcp", {
         method: "POST",
@@ -1262,6 +1300,8 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     else process.env.VOTA_DATA_BACKEND = previousBackend;
     if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
     else process.env.VOTA_STORE_FILE = previousStoreFile;
+    if (previousEventSlug === undefined) delete process.env.NEXT_PUBLIC_EVENT_SLUG;
+    else process.env.NEXT_PUBLIC_EVENT_SLUG = previousEventSlug;
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });

@@ -14,7 +14,7 @@ export default async function LocalCheckoutPage({
   return (
     <Shell flush>
       <PublicTopBar eventCode="TEST·CHECKOUT" />
-      <Container className="grid min-h-[calc(100vh-64px)] place-items-center px-5 py-10">
+      <Container className="grid min-h-[calc(100dvh-64px)] place-items-center px-5 py-10">
         <Card className="w-full max-w-lg border-ink">
           <Kicker>Mollie test-mode simulator</Kicker>
           <h1 className="font-expanded mt-2 text-3xl font-black">Complete test checkout</h1>

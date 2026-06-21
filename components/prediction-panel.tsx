@@ -486,7 +486,7 @@ export function PredictionPanel({
               onClick={() => setShowMobileAdjustPosition(true)}
               className="focus-ring mt-2 min-h-11 w-full rounded-full bg-ink px-4 text-sm font-black text-white"
             >
-              Edit prediction
+              Add or switch
             </button>
           </div>
         ) : null}
@@ -503,7 +503,7 @@ export function PredictionPanel({
         {message ? <p className="mt-3 rounded-xl bg-paper p-3 text-sm font-bold">{message}</p> : null}
         <div className={cn("mt-2 rounded-xl px-2.5 py-2 text-xs font-bold sm:hidden", preview?.blocked ? "bg-ember/10" : "bg-paper")}>
           <div className="flex items-center justify-between gap-2">
-            <span className="min-w-0 truncate">{mobileActionStatus}</span>
+            <span className="min-w-0 leading-tight">{mobileActionStatus}</span>
             <span className="font-mono-vota shrink-0">{selectedAllowed ? `Cap ${mbucks(selectedAllowed.allowedAdd)}` : user.wallet ? mbucks(user.wallet.balanceCredits) : ""}</span>
           </div>
           <div className="font-mono-vota mt-1 flex items-center justify-between gap-2 text-[10px] uppercase text-faded">
@@ -533,6 +533,21 @@ export function PredictionPanel({
             </a>
           ) : null}
         </div>
+        <div className="mt-2 rounded-xl border border-line bg-white p-2 sm:hidden">
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <span className="font-mono-vota text-[10px] font-bold uppercase text-faded">
+              Wallet {user.wallet ? mbucks(user.wallet.balanceCredits) : "Join first"}
+            </span>
+            <span className="font-mono-vota text-[10px] font-bold uppercase text-faded">
+              {selectedAllowed ? `Cap ${mbucks(selectedAllowed.allowedAdd)}` : market.status}
+            </span>
+          </div>
+          <CheckoutButton
+            returnTo={`/m/${market.id}`}
+            disabled={emergencyPaused}
+            disabledReason="Organizer pause is on. MegaBuck top-ups reopen soon."
+          />
+        </div>
         <div className={cn("mt-2 rounded-xl border border-line p-2 sm:hidden", showMobileSupportControls ? "block" : "hidden")}>
           <div className="flex items-center justify-between gap-2">
             <span className="text-xs font-extrabold">{fairLaunchNeedsTopUp ? "Add MBucks to enter" : walletShortfall ? "Add MBucks or lower amount" : guardLimited ? "Limit reached" : "Amount help"}</span>
@@ -558,16 +573,6 @@ export function PredictionPanel({
           >
             Max allowed now
           </button>
-          {walletShortfall ? (
-          <div className="mt-3">
-            <p className="mb-2 text-xs font-bold leading-4 text-muted">No real charge in MEGATHON test mode. MegaBucks stay inside vota.wtf.</p>
-            <CheckoutButton
-              returnTo={`/m/${market.id}`}
-              disabled={emergencyPaused}
-              disabledReason="Organizer pause is on. MegaBuck top-ups reopen soon."
-            />
-          </div>
-          ) : null}
         </div>
         <div className="mt-3 hidden sm:block">
           <p className="mb-2 text-sm font-semibold text-muted">No real charge in MEGATHON test mode. MegaBucks stay inside vota.wtf.</p>
