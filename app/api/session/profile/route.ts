@@ -3,7 +3,7 @@ import { getParticipantSessionIdFromRequest } from "@/lib/auth";
 import { generatedAvatarDataUrl, isGeneratedAvatarUrl } from "@/lib/avatar";
 import { findNextOpenMarketData, getSessionParticipantData, updateParticipantProfileData } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
-import { isValidRole } from "@/lib/participants";
+import { hasCompletedProfile, isValidRole } from "@/lib/participants";
 import { saveAvatarDataUrl } from "@/lib/uploads";
 import { normalizeNickname, normalizeRole } from "@/lib/utils";
 
@@ -17,6 +17,7 @@ export async function PATCH(request: NextRequest) {
   const session = await getSessionParticipantData(getParticipantSessionIdFromRequest(request));
   if (!session) return badRequest("No participant session.", 401);
   if (session.participant.isBanned) return badRequest("This profile is paused by moderation.", 403);
+  if (hasCompletedProfile(session.participant)) return badRequest("Profile is locked after entering the arena.", 409);
   const body = await readJsonObject(request);
   const rawNickname = String(body.nickname || "").trim();
   const rawRole = String(body.role || "");

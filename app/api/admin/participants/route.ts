@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { moderateParticipantData, readDataStore } from "@/lib/data";
-import { badRequest, clientIpFromRequest, csvResponse, json, requireAdminRequest } from "@/lib/http";
+import { adminActionError, clientIpFromRequest, csvResponse, json, requireAdminRequest } from "@/lib/http";
 import { listParticipants } from "@/lib/participants";
 
 const participantCsvColumns = [
@@ -84,6 +84,7 @@ export async function POST(request: NextRequest) {
     redirectTo.search = redirectParams.toString();
     return Response.redirect(redirectTo, 303);
   } catch (error) {
-    return badRequest(error instanceof Error ? error.message : "Could not update participant.");
+    const returnTo = `/admin/participants${redirectParams.toString() ? `?${redirectParams.toString()}` : ""}`;
+    return adminActionError(request, returnTo, error instanceof Error ? error.message : "Could not update participant.");
   }
 }

@@ -1,3 +1,4 @@
+import { createQrMatrix } from "@/components/qr-code";
 import { DEFAULT_EVENT_SLUG } from "./constants";
 import { dashboardMetrics, publicState } from "./store";
 import type { PublicEventState, Store } from "./types";
@@ -24,8 +25,11 @@ export interface ReadinessReport {
   groups: ReadinessGroup[];
 }
 
+export type ReadinessContract = Record<string, unknown>;
+
 type EnvShape = Record<string, string | undefined>;
 type FetchLike = typeof fetch;
+const EXPECTED_SUPABASE_CONTRACT_VERSION = "034_prediction_serialization_readiness";
 
 const proofEnvVars = [
   ["NEXT_PUBLIC_PROOF_REPO_URL", "Public repo / commit"],
@@ -88,9 +92,20 @@ function runtimeChecks(env: EnvShape): ReadinessCheck[] {
   const effectiveBaseUrl = baseUrl || (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : "");
   const normalJoinUrl = effectiveBaseUrl ? `${effectiveBaseUrl.replace(/\/$/, "")}/j/${DEFAULT_EVENT_SLUG}` : "";
   const normalQrIsShort = normalJoinUrl ? new TextEncoder().encode(normalJoinUrl).length <= 134 : true;
+  const qrBase = env.NEXT_PUBLIC_QR_BASE_URL?.replace(/\/$/, "") || "";
+  const qrJoinUrl = normalQrIsShort ? normalJoinUrl : qrBase ? `${qrBase}/j/${DEFAULT_EVENT_SLUG}` : normalJoinUrl;
   const qrBaseReady =
     normalQrIsShort ||
     (isUrl(env.NEXT_PUBLIC_QR_BASE_URL) && !isLocalUrl(env.NEXT_PUBLIC_QR_BASE_URL) && (!production || isHttpsUrl(env.NEXT_PUBLIC_QR_BASE_URL)));
+  let qrMatrixReady = false;
+  try {
+    if (qrBaseReady && qrJoinUrl) {
+      createQrMatrix(qrJoinUrl);
+      qrMatrixReady = true;
+    }
+  } catch {
+    qrMatrixReady = false;
+  }
   const adminPasswordReady =
     configured(env.ADMIN_PASSWORD, ["change-me-for-megathon"]) && (env.ADMIN_PASSWORD || "").length >= 12;
   const baseUrlReady = isUrl(baseUrl) && !isLocalUrl(baseUrl) && (!production || isHttpsUrl(baseUrl));
@@ -148,9 +163,9 @@ function runtimeChecks(env: EnvShape): ReadinessCheck[] {
     check(
       "stage-qr-base",
       "Stage QR base",
-      qrBaseReady ? "pass" : production ? "fail" : "warn",
-      qrBaseReady
-        ? "Stage QR uses the deployed join URL or an explicit compact QR base."
+      qrBaseReady && qrMatrixReady ? "pass" : production ? "fail" : "warn",
+      qrBaseReady && qrMatrixReady
+        ? "Stage QR uses an encodable deployed join URL or explicit compact QR base."
         : "Set NEXT_PUBLIC_QR_BASE_URL to a short deployed HTTPS origin when the public join URL is too long for the stage QR."
     )
   ];
@@ -182,7 +197,8 @@ async function liveIntegrationChecks(env: EnvShape, fetchImpl: FetchLike = fetch
 
   try {
     const response = await fetchImpl(`https://api.mollie.com/v2/payments/${encodeURIComponent(paymentId)}`, {
-      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }
+      headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+      signal: AbortSignal.timeout(5000)
     });
     if (!response.ok) {
       return [
@@ -196,12 +212,22 @@ async function liveIntegrationChecks(env: EnvShape, fetchImpl: FetchLike = fetch
     }
     const data = await response.json().catch(() => ({}));
     const status = typeof data.status === "string" ? data.status : "unknown";
+    if (status !== "paid") {
+      return [
+        check(
+          "mollie-live-payment",
+          "Mollie live payment read",
+          "fail",
+          `Mollie returned payment status ${status}; use a successful paid test payment id for readiness.`
+        )
+      ];
+    }
     return [
       check(
         "mollie-live-payment",
         "Mollie live payment read",
         "pass",
-        `Mollie accepted the test key and returned payment status ${status}.`
+        "Mollie accepted the test key and returned a paid test payment."
       )
     ];
   } catch {
@@ -210,7 +236,7 @@ async function liveIntegrationChecks(env: EnvShape, fetchImpl: FetchLike = fetch
         "mollie-live-payment",
         "Mollie live payment read",
         "fail",
-        "Could not reach Mollie to validate the configured test payment id."
+        "Could not reach Mollie within 5s to validate the configured test payment id."
       )
     ];
   }
@@ -333,13 +359,72 @@ function optionalIntegrationChecks(env: EnvShape): ReadinessCheck[] {
   ];
 }
 
-function readinessGroups(store: Store, env: EnvShape, eventSlug: string): ReadinessGroup[] {
+function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] {
+  if (!contract) {
+    return [
+      check(
+        "supabase-contract",
+        "Supabase contract",
+        "fail",
+        "Could not read the live Supabase contract. Run migrations through 034_prediction_serialization_readiness.sql."
+      )
+    ];
+  }
+  const required: Array<[string, string]> = [
+    ["checkoutIntentsTable", "Checkout intent table"],
+    ["checkoutIntentRecordRpc", "Checkout intent record RPC"],
+    ["checkoutIntentLinkRpc", "Checkout intent link RPC"],
+    ["pendingPurchaseRpc", "Pending checkout transaction RPC"],
+    ["profileLockRpc", "Profile lock RPC"],
+    ["poolSettlementRpc", "Winner-pool settlement RPC"],
+    ["voidMarketRpc", "Void market RPC"],
+    ["transitionMarketRpc", "Market transition RPC"],
+    ["marketSignalsRpc", "Market signal RPC"],
+    ["predictionLockHelperRpc", "Market prediction lock helper"],
+    ["predictionSerializedRpc", "Serialized prediction RPC"],
+    ["agentPredictionSerializedRpc", "Serialized agent prediction RPC"],
+    ["predictionIdempotencyColumn", "Prediction idempotency column"],
+    ["predictionRequestUniqueIndex", "Prediction request unique index"],
+    ["resolutionCreditUniqueIndex", "Resolution credit unique index"],
+    ["voidRefundUniqueIndex", "Void refund unique index"],
+    ["pendingPurchaseUniqueIndex", "Pending checkout unique index"],
+    ["positionsSameEventTrigger", "Position event integrity trigger"],
+    ["predictionActionsSameEventTrigger", "Prediction action event integrity trigger"],
+    ["stageFeatureNormalizeTrigger", "Stage feature normalize trigger"],
+    ["ledgerSettlementColumns", "Ledger settlement columns"]
+  ];
+  const contractVersion = String(contract.contractVersion || "unknown contract");
+  const hasExpectedContractVersion =
+    contractVersion === EXPECTED_SUPABASE_CONTRACT_VERSION || contractVersion === "local";
   return [
+    check(
+      "supabase-contract-version",
+      "Contract version",
+      contract.ok === true && hasExpectedContractVersion ? "pass" : "fail",
+      `Live DB reports ${contractVersion}.`
+    ),
+    ...required.map(([key, label]) =>
+      check(
+        `supabase-${key}`,
+        label,
+        contract[key] === true ? "pass" : "fail",
+        contract[key] === true ? `${label} is present.` : `${label} is missing from the live database.`
+      )
+    )
+  ];
+}
+
+function readinessGroups(store: Store, env: EnvShape, eventSlug: string, contract?: ReadinessContract): ReadinessGroup[] {
+  const groups: ReadinessGroup[] = [
     { title: "Runtime", checks: runtimeChecks(env) },
     { title: "Event Data", checks: eventChecks(store, eventSlug) },
     { title: "Public Proof", checks: proofChecks(env) },
     { title: "Optional P2 Integrations", checks: optionalIntegrationChecks(env) }
   ];
+  if (contract !== undefined) {
+    groups.splice(1, 0, { title: "Supabase Contract", checks: supabaseContractChecks(contract) });
+  }
+  return groups;
 }
 
 function publicReadinessGroups(state: PublicEventState, env: EnvShape, eventSlug: string): ReadinessGroup[] {
@@ -389,10 +474,11 @@ export async function buildReadinessReportWithLiveChecks(
   store: Store,
   env: EnvShape = process.env,
   eventSlug = DEFAULT_EVENT_SLUG,
-  fetchImpl: FetchLike = fetch
+  fetchImpl: FetchLike = fetch,
+  contract?: ReadinessContract
 ): Promise<ReadinessReport> {
   const groups = [
-    ...readinessGroups(store, env, eventSlug),
+    ...readinessGroups(store, env, eventSlug, contract),
     { title: "Live Integrations", checks: await liveIntegrationChecks(env, fetchImpl) }
   ];
   return reportFromGroups(groups);

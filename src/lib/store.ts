@@ -13,6 +13,7 @@ import {
   MAX_AGENT_MARKET_SHARE,
   MAX_HUMAN_MARKET_SHARE,
   MAX_PRICE_IMPACT,
+  PLATFORM_PRIOR_CREDITS_PER_OUTCOME,
   STARTER_CREDITS,
   TEST_CHECKOUT_CREDITS,
   TEST_CHECKOUT_EUR
@@ -39,7 +40,9 @@ import type {
   PublicEventState,
   PublicMarketState,
   Purchase,
+  CheckoutIntent,
   Role,
+  StageMode,
   Store,
   UserMarketState,
   Wallet
@@ -60,6 +63,32 @@ function storePaths() {
     dataFile,
     lockFile: `${dataFile}.lock`
   };
+}
+
+const liveStageModes = new Set<StageMode>(["live", "role_battle", "humans_vs_agents"]);
+
+function isCompatibleStageMarket(stageMode: StageMode, market: Market) {
+  if (stageMode === "resolution") return market.status === "resolved";
+  if (liveStageModes.has(stageMode)) return market.status !== "resolved";
+  return true;
+}
+
+function findStageFallbackMarket(store: Store, event: EventRecord, excludeMarketId?: string) {
+  return store.markets.find((item) =>
+    item.eventId === event.id &&
+    item.id !== excludeMarketId &&
+    item.status !== "draft" &&
+    item.status !== "voided" &&
+    item.showOnStage &&
+    isCompatibleStageMarket(event.stageMode, item)
+  );
+}
+
+function refreshFeaturedMarketAfterRemoval(store: Store, event: EventRecord, removedMarketId: string) {
+  if (event.featuredMarketId !== removedMarketId) return;
+  const fallback = findStageFallbackMarket(store, event, removedMarketId);
+  event.featuredMarketId = fallback?.id;
+  if (!fallback && event.stageMode !== "leaderboard") event.stageMode = "join";
 }
 
 export const SEED_IDS = {
@@ -393,6 +422,7 @@ export function createSeedStore(): Store {
     ledgerEntries: [],
     marketAggregates: markets.map((market) => defaultAggregate(market.id)),
     purchases: [],
+    checkoutIntents: [],
     adminAuditLogs: [],
     agentProfiles: [],
     agentRuns: [],
@@ -412,6 +442,7 @@ export function readStore(): Store {
   }
   const store = JSON.parse(fs.readFileSync(dataFile, "utf8")) as Store;
   store.mcpTokens ||= [];
+  store.checkoutIntents ||= [];
   for (const market of store.markets) {
     market.fairLaunchPeopleThreshold ??= FAIR_LAUNCH_PEOPLE;
     market.fairLaunchSignalCreditsThreshold ??= FAIR_LAUNCH_SIGNAL_CREDITS;
@@ -548,6 +579,9 @@ export function updateParticipantProfile(
 ) {
   const participant = store.participants.find((item) => item.id === participantId);
   if (!participant) throw new Error("Participant not found");
+  if (participant.participantType === "human" && hasCompletedProfile(participant)) {
+    throw new Error("Profile is locked after entering the arena.");
+  }
   const previousRole = participant.role;
   participant.nickname = normalizeNickname(input.nickname);
   participant.role = normalizeRole(input.role);
@@ -661,17 +695,23 @@ function signalSnapshotFromTotals(
   const credit: Record<string, number> = {};
   const conviction: Record<string, number> = {};
   const stage: Record<string, number> = {};
+  const neutralShare = outcomes.length > 0 ? 1 / outcomes.length : 0;
+  const priorCredits = PLATFORM_PRIOR_CREDITS_PER_OUTCOME;
+  const totalCreditsWithPrior = input.totalSignalCredits + priorCredits * outcomes.length;
   const weights = outcomes.reduce<Record<string, number>>((acc, outcome) => {
-    acc[outcome.id] = Math.log1p(Math.max(0, input.outcomeCreditTotals[outcome.id] || 0));
+    acc[outcome.id] = Math.log1p(Math.max(0, input.outcomeCreditTotals[outcome.id] || 0) + priorCredits);
     return acc;
   }, {});
   const totalWeight = Object.values(weights).reduce((sum, value) => sum + value, 0);
   for (const outcome of outcomes) {
     people[outcome.id] = input.totalPeople > 0 ? (input.outcomePeopleCounts[outcome.id] || 0) / input.totalPeople : 0;
     credit[outcome.id] =
-      input.totalSignalCredits > 0 ? (input.outcomeCreditTotals[outcome.id] || 0) / input.totalSignalCredits : 0;
+      totalCreditsWithPrior > 0
+        ? ((input.outcomeCreditTotals[outcome.id] || 0) + priorCredits) / totalCreditsWithPrior
+        : 0;
     conviction[outcome.id] = totalWeight > 0 ? weights[outcome.id] / totalWeight : 0;
-    stage[outcome.id] = 0.65 * people[outcome.id] + 0.35 * conviction[outcome.id];
+    const peopleComponent = input.totalPeople > 0 ? people[outcome.id] : neutralShare;
+    stage[outcome.id] = 0.65 * peopleComponent + 0.35 * conviction[outcome.id];
   }
   return { people, credit, conviction, stage };
 }
@@ -902,7 +942,8 @@ export function calculateAllowedStake(
 
   const aggregate = participant.participantType === "human" ? humanMarketAggregate(store, market.id) : getAggregate(store, market.id);
   const position = store.positions.find((item) => item.participantId === participant.id && item.marketId === market.id);
-  const fairLaunch = !position && marketIsInFairLaunch(store, market);
+  const fairLaunchActive = marketIsInFairLaunch(store, market);
+  const fairLaunch = !position && fairLaunchActive;
   if (fairLaunch) {
     return {
       allowedAdd: Math.min(wallet.balanceCredits, INITIAL_STAKE_AMOUNT),
@@ -926,18 +967,22 @@ export function calculateAllowedStake(
   const stepUpCap = position ? Math.max(INITIAL_STAKE_AMOUNT, Math.floor(position.rawCredits * 0.5)) : market.maxActionStake;
   const currentUserSignal = position?.signalCredits || 0;
   const shareCap = participant.participantType === "human" ? MAX_HUMAN_MARKET_SHARE : MAX_AGENT_MARKET_SHARE;
-  const shareMax = marketShareMax(aggregate, currentUserSignal, shareCap, market.maxActionStake);
   const switching = Boolean(position && position.outcomeId !== input.outcomeId);
-  const impactMax = switching
-    ? switchImpactMax(aggregate, position!.outcomeId, input.outcomeId, position!.signalCredits, market.maxActionStake)
-    : priceImpactMax(aggregate, input.outcomeId, market.maxActionStake);
+  const fairLaunchStepUp = Boolean(position && fairLaunchActive);
+  const shareMax = fairLaunchStepUp ? market.maxActionStake : marketShareMax(aggregate, currentUserSignal, shareCap, market.maxActionStake);
+  const impactMax = fairLaunchStepUp
+    ? market.maxActionStake
+    : switching
+      ? switchImpactMax(aggregate, position!.outcomeId, input.outcomeId, position!.signalCredits, market.maxActionStake)
+      : priceImpactMax(aggregate, input.outcomeId, market.maxActionStake);
   const parts = {
     availableCredits: wallet.balanceCredits,
     maxActionStake: market.maxActionStake,
     stepUpCap,
     cooldownCap,
     marketShareCap: shareMax,
-    priceImpactCap: impactMax
+    priceImpactCap: impactMax,
+    fairLaunchStepUp: fairLaunchStepUp ? market.maxActionStake : 0
   };
   const allowedAdd = Math.max(
     0,
@@ -956,8 +1001,8 @@ export function calculateAllowedStake(
         ? `Cooldown active. Try again in ${cooldownRemainingSeconds}s.`
       : switching && impactMax <= 0
           ? "This market cannot absorb that switch yet."
-        : "This market cannot absorb more Credits from this profile yet."
-      : `This market can absorb up to ${allowedAdd} Credits from you right now.`;
+        : "This market cannot absorb more MegaBucks from this profile yet."
+      : `This market can absorb up to ${allowedAdd} MegaBucks from you right now.`;
   return {
     allowedAdd,
     reason,
@@ -1037,13 +1082,13 @@ export function placePrediction(
   }
   if (amountCredits > allowed.allowedAdd) {
     const reason = switching ? "This market cannot absorb that switch yet." : "This market cannot absorb that much yet.";
-    throw new Error(`${reason} This market can absorb up to ${allowed.allowedAdd} Credits from you right now.`);
+    throw new Error(`${reason} This market can absorb up to ${allowed.allowedAdd} MegaBucks from you right now.`);
   }
   if (wallet.balanceCredits < amountCredits) throw new Error("Not enough MegaBucks.");
 
   const snapshots = signalSnapshots(store, market.id);
   const { feeCredits, signalCredits } = signalFromAmount(amountCredits);
-  if (switching && existing) {
+  if (switching && existing && !marketIsInFairLaunch(store, market)) {
     assertSwitchImpactAllowed(getAggregate(store, market.id), existing.outcomeId, outcome.id, existing.signalCredits, signalCredits);
   }
   const now = nowIso();
@@ -1235,6 +1280,7 @@ export function userMarketState(
         postCooldownAllowedAdd,
         reason: allowed.reason,
         fairLaunch: allowed.fairLaunch,
+        minInitial: allowed.minInitial,
         cooldownRemainingSeconds: allowed.cooldownRemainingSeconds
       };
       return acc;
@@ -1269,12 +1315,18 @@ export function predictionPreview(
     outcomeId: outcome.id
   });
   const requested = Math.max(0, Math.floor(Number(input.amountCredits) || 0));
-  const blocked = requested > allowed.allowedAdd || allowed.allowedAdd <= 0;
+  const position = store.positions.find((item) => item.participantId === participant.id && item.marketId === market.id);
+  const isZeroMegaBuckSwitch = Boolean(position && position.outcomeId !== outcome.id && requested === 0);
+  const zeroMegaBuckSwitchAllowed = Boolean(
+    isZeroMegaBuckSwitch &&
+      allowed.cooldownRemainingSeconds <= 0 &&
+      (marketIsInFairLaunch(store, market) || isSwitchImpactAllowed(aggregate, position!.outcomeId, outcome.id, position!.signalCredits, 0))
+  );
+  const blocked = requested > allowed.allowedAdd || (allowed.allowedAdd <= 0 && !zeroMegaBuckSwitchAllowed);
   const appliedAmount = blocked ? 0 : Math.min(requested, allowed.allowedAdd);
   const addedSignal = signalFromAmount(appliedAmount).signalCredits;
   const peopleCounts = { ...aggregate.outcomePeopleCounts };
   const creditTotals = { ...aggregate.outcomeCreditTotals };
-  const position = store.positions.find((item) => item.participantId === participant.id && item.marketId === market.id);
   const isHuman = participant.participantType === "human";
 
   if (!blocked && isHuman) {
@@ -1300,7 +1352,7 @@ export function predictionPreview(
     amountCredits: requested,
     allowedAdd: allowed.allowedAdd,
     blocked,
-    reason: requested > allowed.allowedAdd ? `Too much conviction for this market right now. Max allowed: ${allowed.allowedAdd} Credits.` : allowed.reason,
+    reason: requested > allowed.allowedAdd ? `Too much conviction for this market right now. Max allowed: ${allowed.allowedAdd} MegaBucks.` : allowed.reason,
     before: {
       peopleSignal: before.people[outcome.id] || 0,
       creditSignal: before.credit[outcome.id] || 0,
@@ -1325,8 +1377,8 @@ export function publicState(store: Store, slug = DEFAULT_EVENT_SLUG): PublicEven
   const markets = rawMarkets
     .map((market) => publicMarketState(store, market));
   const featuredMarketId =
-    stageMarkets.find((market) => market.id === event.featuredMarketId)?.id ||
-    stageMarkets[0]?.id;
+    stageMarkets.find((market) => market.id === event.featuredMarketId && isCompatibleStageMarket(event.stageMode, market))?.id ||
+    stageMarkets.find((market) => isCompatibleStageMarket(event.stageMode, market))?.id;
   const featuredMarket = featuredMarketId ? rawMarkets.find((market) => market.id === featuredMarketId) : undefined;
   const hideRoleWinners = Boolean(featuredMarket && blindLaunchState(store, featuredMarket).active);
   return {
@@ -1514,17 +1566,7 @@ export function updateMarket(
   });
   if (!market.showOnStage) {
     const event = store.events.find((item) => item.id === market.eventId);
-    if (event?.featuredMarketId === market.id) {
-      const fallback = store.markets.find((item) =>
-        item.eventId === event.id &&
-        item.id !== market.id &&
-        item.status !== "draft" &&
-        item.status !== "voided" &&
-        item.showOnStage
-      );
-      event.featuredMarketId = fallback?.id;
-      if (!fallback && event.stageMode !== "leaderboard") event.stageMode = "join";
-    }
+    if (event) refreshFeaturedMarketAfterRemoval(store, event, market.id);
   }
   if (input.outcomes) {
     if (market.status !== "draft") throw new Error("Outcome editing is only allowed while the market is a draft.");
@@ -1574,17 +1616,7 @@ export function transitionMarket(store: Store, marketId: string, action: "open" 
     market.voidedAt = now;
     market.showOnStage = false;
     const event = store.events.find((item) => item.id === market.eventId);
-    if (event?.featuredMarketId === market.id) {
-      const fallback = store.markets.find((item) =>
-        item.eventId === event.id &&
-        item.id !== market.id &&
-        item.status !== "draft" &&
-        item.status !== "voided" &&
-        item.showOnStage
-      );
-      event.featuredMarketId = fallback?.id;
-      if (!fallback && event.stageMode !== "leaderboard") event.stageMode = "join";
-    }
+    if (event) refreshFeaturedMarketAfterRemoval(store, event, market.id);
     const positions = store.positions.filter((position) => position.marketId === market.id && position.rawCredits > 0);
     const snapshots = signalSnapshots(store, market.id);
     for (const position of positions) {
@@ -1651,9 +1683,34 @@ function stampClosingStageSignals(store: Store, marketId: string) {
 function settleResolvedMarketCredits(store: Store, market: Market, outcomeId: string, createdAt: string) {
   let settledCount = 0;
   let settledCredits = 0;
-  const winningPositions = store.positions.filter(
-    (position) => position.marketId === market.id && position.outcomeId === outcomeId && position.rawCredits > 0
-  );
+  const marketPositions = store.positions.filter((position) => position.marketId === market.id && position.rawCredits > 0);
+  const winningPositions = marketPositions
+    .filter((position) => position.outcomeId === outcomeId)
+    .sort((a, b) => b.rawCredits - a.rawCredits || a.id.localeCompare(b.id));
+  const winningPool = winningPositions.reduce((sum, position) => sum + position.rawCredits, 0);
+  const losingPool = marketPositions
+    .filter((position) => position.outcomeId !== outcomeId)
+    .reduce((sum, position) => sum + position.rawCredits, 0);
+  const poolShares = new Map<string, number>();
+  if (winningPool > 0) {
+    let assignedPool = 0;
+    for (const position of winningPositions) {
+      const share = Math.floor((losingPool * position.rawCredits) / winningPool);
+      poolShares.set(position.id, share);
+      assignedPool += share;
+    }
+    let remainder = losingPool - assignedPool;
+    for (const position of winningPositions) {
+      if (remainder <= 0) break;
+      poolShares.set(position.id, (poolShares.get(position.id) || 0) + 1);
+      remainder -= 1;
+    }
+  }
+  for (const position of marketPositions) {
+    const wallet = store.wallets.find((item) => item.participantId === position.participantId);
+    if (!wallet) throw new Error("Wallet not found.");
+    wallet.totalCommittedCredits = Math.max(0, wallet.totalCommittedCredits - position.rawCredits);
+  }
   for (const position of winningPositions) {
     const alreadySettled = store.ledgerEntries.some(
       (entry) => entry.type === "resolution_credit" && entry.participantId === position.participantId && entry.marketId === market.id
@@ -1661,21 +1718,23 @@ function settleResolvedMarketCredits(store: Store, market: Market, outcomeId: st
     if (alreadySettled) continue;
     const wallet = store.wallets.find((item) => item.participantId === position.participantId);
     if (!wallet) throw new Error("Wallet not found.");
-    wallet.balanceCredits += position.rawCredits;
+    const poolShare = poolShares.get(position.id) || 0;
+    const payoutCredits = position.rawCredits + poolShare;
+    wallet.balanceCredits += payoutCredits;
     store.ledgerEntries.push({
       id: makeId("led"),
       participantId: position.participantId,
       type: "resolution_credit",
-      amountCredits: position.rawCredits,
+      amountCredits: payoutCredits,
       direction: "credit",
       balanceAfter: wallet.balanceCredits,
       reason: `Resolved prediction credit: ${market.title}`,
       marketId: market.id,
-      metadata: { outcomeId },
+      metadata: { outcomeId, stakeReturned: position.rawCredits, poolShare, losingPool, winningPool },
       createdAt
     });
     settledCount += 1;
-    settledCredits += position.rawCredits;
+    settledCredits += payoutCredits;
   }
   return { settledCount, settledCredits };
 }
@@ -1688,6 +1747,10 @@ export function resolveMarket(
   const market = store.markets.find((item) => item.id === marketId);
   const outcome = store.outcomes.find((item) => item.id === input.outcomeId && item.marketId === marketId);
   if (!market || !outcome) throw new Error("Resolution target not found");
+  if (market.status === "resolved") {
+    if (market.resolvedOutcomeId === outcome.id) return market;
+    throw new Error("Market is already resolved with a different outcome.");
+  }
   if (market.status !== "locked") throw new Error("Only locked markets can be resolved.");
   const now = nowIso();
   market.status = "resolved";
@@ -1838,8 +1901,8 @@ export function leaderboard(store: Store, eventSlug = DEFAULT_EVENT_SLUG): Leade
   return store.participants
     .filter((participant) => participant.eventId === event.id && !participant.isBanned)
     .map((participant) => {
-      const committed = store.wallets.find((wallet) => wallet.participantId === participant.id)?.totalCommittedCredits || 0;
       const actions = store.predictionActions.filter((action) => action.participantId === participant.id && action.actionType !== "admin_void");
+      const lifetimeCommitted = actions.reduce((sum, action) => sum + Math.max(0, action.amountCredits), 0);
       const stats = participantLeaderboardStats(store, participant.id);
       const correctMarkets = store.markets.filter(
         (market) =>
@@ -1860,7 +1923,7 @@ export function leaderboard(store: Store, eventSlug = DEFAULT_EVENT_SLUG): Leade
         oracleScore: participant.oracleScore,
         predictions: actions.length,
         correctMarkets,
-        efficiency: committed > 0 ? participant.oracleScore / committed : participant.oracleScore,
+        efficiency: lifetimeCommitted > 0 ? participant.oracleScore / lifetimeCommitted : participant.oracleScore,
         earlyScore: Math.round(stats.earlyScore),
         contrarianScore: Math.round(stats.contrarianScore)
       };
@@ -1906,12 +1969,62 @@ export function createPurchase(store: Store, participantId: string) {
   return purchase;
 }
 
+export function recordCheckoutIntent(store: Store, participantId: string, purchaseId?: string) {
+  const participant = store.participants.find((item) => item.id === participantId);
+  if (!participant) throw new Error("Participant not found");
+  const now = nowIso();
+  const existing = store.checkoutIntents.find(
+    (intent) => intent.eventId === participant.eventId && intent.participantId === participant.id
+  );
+  if (existing) {
+    existing.lastClickedAt = now;
+    existing.clickCount += 1;
+    if (purchaseId) existing.purchaseId = purchaseId;
+    return existing;
+  }
+  const intent: CheckoutIntent = {
+    id: makeId("cki"),
+    eventId: participant.eventId,
+    participantId: participant.id,
+    firstClickedAt: now,
+    lastClickedAt: now,
+    clickCount: 1,
+    amountEur: TEST_CHECKOUT_EUR,
+    credits: TEST_CHECKOUT_CREDITS,
+    purchaseId
+  };
+  store.checkoutIntents.push(intent);
+  return intent;
+}
+
+export function linkCheckoutIntentToPurchase(store: Store, participantId: string, purchaseId: string) {
+  const participant = store.participants.find((item) => item.id === participantId);
+  if (!participant) throw new Error("Participant not found");
+  const intent = store.checkoutIntents.find(
+    (item) => item.eventId === participant.eventId && item.participantId === participant.id
+  );
+  if (!intent) return recordCheckoutIntent(store, participantId, purchaseId);
+  intent.purchaseId = purchaseId;
+  intent.lastClickedAt = nowIso();
+  return intent;
+}
+
 export function creditPaidPurchase(store: Store, purchaseId: string, status: "paid" | "failed" | "canceled" = "paid", auditIp?: string) {
   const purchase = store.purchases.find((item) => item.id === purchaseId || item.molliePaymentId === purchaseId);
   if (!purchase) throw new Error("Purchase not found");
   if (purchase.status === "credited") return { purchase, credited: false };
   if (status !== "paid") {
+    const previousStatus = purchase.status;
     purchase.status = status;
+    if (previousStatus !== status) {
+      createAuditLog(store, {
+        action: "payment_status",
+        entityType: "purchase",
+        entityId: purchase.id,
+        details: { previousStatus, status: purchase.status },
+        ip: auditIp
+      });
+    }
     return { purchase, credited: false };
   }
   purchase.status = "paid";
@@ -2054,6 +2167,9 @@ export function paymentMetrics(store: Store, participantIds?: Set<string>) {
   const purchases = participantIds
     ? store.purchases.filter((purchase) => participantIds.has(purchase.participantId))
     : store.purchases;
+  const checkoutIntents = participantIds
+    ? store.checkoutIntents.filter((intent) => participantIds.has(intent.participantId))
+    : store.checkoutIntents;
   const byStatus = purchases.reduce<Record<string, number>>((acc, purchase) => {
     acc[purchase.status] = (acc[purchase.status] || 0) + 1;
     return acc;
@@ -2063,7 +2179,10 @@ export function paymentMetrics(store: Store, participantIds?: Set<string>) {
     byStatus,
     completed: credited.length,
     creditsIssued: credited.reduce((sum, purchase) => sum + purchase.credits, 0),
-    projectedEur: credited.reduce((sum, purchase) => sum + purchase.amountEur, 0)
+    projectedEur: credited.reduce((sum, purchase) => sum + purchase.amountEur, 0),
+    intentCount: checkoutIntents.length,
+    intentClicks: checkoutIntents.reduce((sum, intent) => sum + intent.clickCount, 0),
+    intentProjectedEur: checkoutIntents.reduce((sum, intent) => sum + intent.amountEur, 0)
   };
 }
 

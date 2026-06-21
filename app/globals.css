@@ -1,0 +1,166 @@
+@import url("https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700;800;900&family=Archivo+Expanded:wght@700;800;900&family=Space+Mono:wght@400;700&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --ink: #0b0b0c;
+  --paper: #fafaf8;
+  --admin: #eaedf1;
+  --line: #eceae3;
+  --soft: #f1f0ec;
+  --ember: #ff5a1f;
+  --mint: #18c97b;
+  --danger: #ff5a5a;
+  --warn: #f0c000;
+  --muted: #6b6b66;
+  --faded: #9a958a;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #fff;
+  color: var(--ink);
+  font-family:
+    Archivo, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+::selection {
+  background: var(--ember);
+  color: #fff;
+}
+
+.focus-ring {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+
+.focus-ring:focus-visible {
+  outline-color: var(--ink);
+}
+
+.stage-grid {
+  background-image:
+    linear-gradient(rgba(11, 11, 12, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(11, 11, 12, 0.06) 1px, transparent 1px);
+  background-size: 44px 44px;
+}
+
+.font-expanded {
+  font-family: "Archivo Expanded", Archivo, ui-sans-serif, system-ui, sans-serif;
+}
+
+.font-mono-vota {
+  font-family: "Space Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.vota-marquee {
+  animation: vota-marquee 22s linear infinite;
+}
+
+.vota-marquee-reverse {
+  animation: vota-marquee-reverse 22s linear infinite;
+}
+
+.vota-fill {
+  animation: vota-fill 900ms ease-out;
+}
+
+.vota-pulse-dot {
+  animation: vota-pulse 1.3s ease-in-out infinite;
+}
+
+.vota-rise {
+  animation: vota-rise 420ms ease-out both;
+}
+
+@keyframes vota-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+@keyframes vota-marquee-reverse {
+  from {
+    transform: translateX(-50%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes vota-fill {
+  from {
+    width: 0;
+  }
+}
+
+@keyframes vota-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.42;
+    transform: scale(0.78);
+  }
+}
+
+@keyframes vota-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes stage-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(24, 201, 123, 0.48);
+    transform: scale(1);
+  }
+  45% {
+    box-shadow: 0 0 0 10px rgba(24, 201, 123, 0);
+    transform: scale(1.012);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(24, 201, 123, 0);
+    transform: scale(1);
+  }
+}
+
+.stage-pulse-even,
+.stage-pulse-odd {
+  animation: stage-pulse 900ms ease-out;
+}

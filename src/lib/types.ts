@@ -171,6 +171,18 @@ export interface Purchase {
   creditedAt?: string;
 }
 
+export interface CheckoutIntent {
+  id: string;
+  eventId: string;
+  participantId: string;
+  firstClickedAt: string;
+  lastClickedAt: string;
+  clickCount: number;
+  amountEur: number;
+  credits: number;
+  purchaseId?: string;
+}
+
 export interface AdminAuditLog {
   id: string;
   action: string;
@@ -220,6 +232,7 @@ export interface Store {
   ledgerEntries: LedgerEntry[];
   marketAggregates: MarketAggregate[];
   purchases: Purchase[];
+  checkoutIntents: CheckoutIntent[];
   adminAuditLogs: AdminAuditLog[];
   agentProfiles: AgentProfile[];
   agentRuns: AgentRun[];
@@ -305,6 +318,7 @@ export interface UserMarketState {
     postCooldownAllowedAdd: number;
     reason: string;
     fairLaunch: boolean;
+    minInitial: number;
     cooldownRemainingSeconds: number;
   }>;
   receiptId?: string;

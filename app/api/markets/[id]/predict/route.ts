@@ -15,6 +15,16 @@ function predictionRequestId(request: NextRequest, body: Record<string, unknown>
   return (header || bodyValue).trim().slice(0, 128) || undefined;
 }
 
+function parseAmountCredits(value: unknown, options: { required: boolean }) {
+  if ((value === null || value === undefined || value === "") && !options.required) return 0;
+  if (value === null || value === undefined || value === "") throw new Error("Choose a valid MegaBuck amount.");
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || !Number.isInteger(amount) || amount < 0) {
+    throw new Error("Choose a valid MegaBuck amount.");
+  }
+  return amount;
+}
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const sessionId = getParticipantSessionIdFromRequest(request);
@@ -25,7 +35,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   if (session?.participant.isBanned) return badRequest("This profile is paused by moderation.", 403);
   if (!hasCompletedProfile(session?.participant)) return badRequest("Finish your profile before predicting.", 401);
   const outcomeId = request.nextUrl.searchParams.get("outcomeId") || "";
-  const amountCredits = Number(request.nextUrl.searchParams.get("amountCredits") || 0);
+  let amountCredits = 0;
+  try {
+    amountCredits = parseAmountCredits(request.nextUrl.searchParams.get("amountCredits"), { required: false });
+  } catch (error) {
+    return badRequest(error instanceof Error ? error.message : "Choose a valid MegaBuck amount.");
+  }
   const preview = outcomeId
     ? await predictionPreviewData(sessionId, {
         marketId: id,
@@ -50,12 +65,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   if (!hasCompletedProfile(session.participant)) return badRequest("Finish your profile before predicting.", 401);
   const body = await readJsonObject(request);
   try {
+    const amountCredits = parseAmountCredits(body.amountCredits, { required: true });
+    const requestId = predictionRequestId(request, body);
+    if (!requestId) return badRequest("Prediction request id required. Refresh and try again.", 400);
     const result = await placePredictionData(session.session.id, {
       participantId: session.participant.id,
       marketId: id,
       outcomeId: String(body.outcomeId || ""),
-      amountCredits: Number(body.amountCredits || 0),
-      requestId: predictionRequestId(request, body)
+      amountCredits,
+      requestId
     });
     return json({
       position: result.position,

@@ -51,6 +51,14 @@ Run the local-Supabase gate after `supabase start`:
 npm run verify:local:supabase
 ```
 
+Run the full browser E2E loop against a fresh local Supabase database:
+
+```bash
+npm run e2e:local
+```
+
+That command starts local Supabase, resets the database, writes `.env.local`, seeds fresh `Megathon` and `megatalkTesting` rooms, starts Next on `http://127.0.0.1:3100`, and runs the desktop and mobile Playwright scenarios.
+
 Run the deployment gate after setting `READINESS_URL` to the deployed origin or `/api/readiness` URL:
 
 ```bash
@@ -77,7 +85,7 @@ supabase link --project-ref <your-supabase-project-ref>
 npm run supabase:push
 ```
 
-The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/028_human_room_signal_snapshot.sql`.
+The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/034_prediction_serialization_readiness.sql`.
 
 Production Supabase auto-seeding is disabled by default. Leave `VOTA_ENABLE_PRODUCTION_AUTO_SEED` unset for the live event so demo seed markets and participants cannot be inserted on first read.
 
@@ -135,4 +143,4 @@ Production must use a Mollie `test_` key. Live Mollie keys, external cash-out me
 
 ## CI
 
-GitHub Actions runs `npm install` and `npm run verify` on pushes to `main` and pull requests. The repo intentionally does not require Playwright for the current demo gate; the node test suite exercises the join, prediction, checkout, admin, readiness, MCP, and receipt flows through route handlers.
+GitHub Actions runs `npm install` and `npm run verify` on pushes to `main` and pull requests. The node test suite exercises the join, prediction, checkout, admin, readiness, MCP, and receipt flows through route handlers. For full local browser coverage with multiple real browser users, run `npm run e2e:local`.

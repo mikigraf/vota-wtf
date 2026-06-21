@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { readDataStore, updateMarketData } from "@/lib/data";
-import { badRequest, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
+import { adminActionError, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
 import { assertRequestSize, MAX_MARKET_FORM_BYTES, saveMarketImageFile } from "@/lib/uploads";
 import { nowIso } from "@/lib/utils";
 
@@ -26,6 +26,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const unauthorized = await requireAdminRequest(request);
   if (unauthorized) return unauthorized;
   const { id } = await params;
+  const returnTo = `/admin/markets/${id}`;
   try {
     assertRequestSize(request, MAX_MARKET_FORM_BYTES);
     const form = await request.formData();
@@ -72,8 +73,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       clearBlindLaunchEndedAt: form.get("endBlindLaunch") !== "on",
       auditIp
     });
-    return Response.redirect(new URL(`/admin/markets/${id}`, request.url), 303);
+    return Response.redirect(new URL(returnTo, request.url), 303);
   } catch (error) {
-    return badRequest(error instanceof Error ? error.message : "Could not update market.");
+    return adminActionError(request, returnTo, error instanceof Error ? error.message : "Could not update market.");
   }
 }

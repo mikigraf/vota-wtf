@@ -90,6 +90,21 @@ function withAttemptCookie(response: NextResponse, attemptId: string) {
   return response;
 }
 
+function safeAdminNext(value?: unknown) {
+  return typeof value === "string" && value.startsWith("/admin") && !value.startsWith("//") ? value : "/admin";
+}
+
+function loginErrorResponse(request: NextRequest, attemptId: string, message: string, status = 400, next?: unknown) {
+  const contentType = request.headers.get("content-type") || "";
+  const accept = request.headers.get("accept") || "";
+  const wantsJson = contentType.includes("application/json") || (accept.includes("application/json") && !accept.includes("text/html"));
+  if (wantsJson) return withAttemptCookie(badRequest(message, status), attemptId);
+  const url = new URL("/admin/login", request.url);
+  url.searchParams.set("error", message.slice(0, 180));
+  url.searchParams.set("next", safeAdminNext(next));
+  return withAttemptCookie(NextResponse.redirect(url, { status: 303 }), attemptId);
+}
+
 async function readLoginBody(request: NextRequest) {
   const contentType = request.headers.get("content-type") || "";
   const parsed = contentType.includes("application/json")
@@ -105,10 +120,10 @@ export async function POST(request: NextRequest) {
   try {
     throttles = await throttleStatuses(keys);
   } catch {
-    return withAttemptCookie(badRequest("Admin login throttle is unavailable.", 503), attemptId);
+    return loginErrorResponse(request, attemptId, "Admin login throttle is unavailable.", 503);
   }
   if (throttles.some((throttle) => !throttle.allowed)) {
-    return withAttemptCookie(badRequest("Too many attempts. Try again later.", 429), attemptId);
+    return loginErrorResponse(request, attemptId, "Too many attempts. Try again later.", 429);
   }
   const contentType = request.headers.get("content-type") || "";
   const body = await readLoginBody(request);
@@ -117,15 +132,15 @@ export async function POST(request: NextRequest) {
   try {
     ok = verifyAdminPassword(password);
   } catch (error) {
-    return withAttemptCookie(badRequest(error instanceof Error ? error.message : "Admin auth is not configured.", 500), attemptId);
+    return loginErrorResponse(request, attemptId, error instanceof Error ? error.message : "Admin auth is not configured.", 500, body.next);
   }
   if (!ok) {
     try {
       await recordFailures(keys);
     } catch {
-      return withAttemptCookie(badRequest("Admin login throttle is unavailable.", 503), attemptId);
+      return loginErrorResponse(request, attemptId, "Admin login throttle is unavailable.", 503, body.next);
     }
-    return withAttemptCookie(badRequest("Invalid admin password.", 401), attemptId);
+    return loginErrorResponse(request, attemptId, "Invalid admin password.", 401, body.next);
   }
   await clearFailureBuckets(keys);
   const token = await signAdminToken();
@@ -135,8 +150,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set(adminApiCookieName(), token, adminCookieOptions("/api/admin"));
     return withAttemptCookie(response, attemptId);
   }
-  const next = typeof body.next === "string" && body.next.startsWith("/admin") ? body.next : "/admin";
-  const response = NextResponse.redirect(new URL(next, request.url), { status: 303 });
+  const response = NextResponse.redirect(new URL(safeAdminNext(body.next), request.url), { status: 303 });
   response.cookies.set(adminCookieName(), token, adminCookieOptions("/admin"));
   response.cookies.set(adminApiCookieName(), token, adminCookieOptions("/api/admin"));
   return withAttemptCookie(response, attemptId);

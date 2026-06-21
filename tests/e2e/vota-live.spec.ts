@@ -1,0 +1,149 @@
+import { spawnSync } from "node:child_process";
+import { expect, test, type Browser, type BrowserContext, type Page } from "@playwright/test";
+
+type JoinedUser = {
+  context: BrowserContext;
+  page: Page;
+};
+
+const adminPassword = process.env.ADMIN_PASSWORD || "local-admin-password";
+const megathonWinnerMarketId = "00000000-0000-4000-8000-000000000201";
+
+function seedFreshRooms() {
+  const result = spawnSync(process.execPath, ["-r", "./tests/register-ts.cjs", "scripts/seed-e2e.ts"], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+      NEXT_PUBLIC_EVENT_SLUG: "megathon",
+      VOTA_DATA_BACKEND: "supabase",
+      VOTA_DISABLE_AUTO_SEED: "1",
+      MOLLIE_API_KEY: "",
+      MOLLIE_READINESS_PAYMENT_ID: ""
+    },
+    stdio: "inherit"
+  });
+  expect(result.status).toBe(0);
+}
+
+async function joinRoom(browser: Browser, roomSlug: string, name: string, role: "builder" | "sponsor" | "investor" | "other"): Promise<JoinedUser> {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(`/join/${roomSlug}`);
+  await page.getByLabel("Stage name").fill(name);
+  await page.getByLabel("Role").selectOption(role);
+  await page.getByRole("button", { name: "Enter the markets" }).click();
+  await expect(page).toHaveURL(/\/m\/|\/e\//);
+  await expect(page.getByText(name).or(page.getByText(/Prediction|Live room/))).toBeVisible();
+  return { context, page };
+}
+
+async function pickOutcome(page: Page, outcomeLabel: string, amount = 100) {
+  await page.getByRole("button", { name: new RegExp(outcomeLabel) }).first().click();
+  if (amount !== 100) {
+    const custom = page.getByLabel("Custom MegaBucks").first();
+    if (await custom.isVisible()) await custom.fill(String(amount));
+  }
+  await expect(page.getByRole("button", { name: new RegExp(`Submit ${amount} MBucks|Add ${amount} MBucks|Switch`) })).toBeEnabled();
+  await page.getByRole("button", { name: new RegExp(`Submit ${amount} MBucks|Add ${amount} MBucks|Switch`) }).click();
+  await expect(page.getByText("Prediction submitted.")).toBeVisible();
+}
+
+async function loginAdmin(page: Page, next = "/admin/events/megathon") {
+  await page.goto(`/admin/login?next=${encodeURIComponent(next)}`);
+  await page.getByLabel("Weekend password").fill(adminPassword);
+  await page.getByRole("button", { name: "Open admin" }).click();
+  await expect(page).toHaveURL(new RegExp(next.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+}
+
+test.describe("local Supabase live event flows", () => {
+  test.beforeEach(() => {
+    seedFreshRooms();
+  });
+
+  test("multiple people join Megathon, wager, top up, resolve, and get receipts", async ({ browser }) => {
+    const orbit = await joinRoom(browser, "megathon", "Orbit Caller", "builder");
+    const nova = await joinRoom(browser, "megathon", "Nova Caller", "sponsor");
+    const talk = await joinRoom(browser, "megatalkTesting", "Talk Tester", "investor");
+
+    await expect(orbit.page.getByRole("heading", { name: /Who wins Megathon/ })).toBeVisible();
+    await pickOutcome(orbit.page, "Team Orbit");
+    await pickOutcome(nova.page, "Team Nova");
+
+    await talk.page.goto("/e/megatalkTesting");
+    await expect(talk.page.getByText("megatalkTesting").or(talk.page.getByText(/Who wins megatalkTesting/i))).toBeVisible();
+    await talk.page.getByRole("link", { name: /Who wins megatalkTesting/i }).first().click();
+    await pickOutcome(talk.page, "Team Atlas");
+
+    await orbit.page.goto("/e/megathon");
+    await orbit.page.getByRole("button", { name: "Add 100 MBucks" }).first().click();
+    await expect(orbit.page).toHaveURL(/\/checkout\/test\//);
+    await orbit.page.getByRole("button", { name: /Mark test payment paid/ }).click();
+    await expect(orbit.page).toHaveURL(/checkout=/);
+    await expect(orbit.page.getByText(/\+100 MBucks added|Test checkout completed/)).toBeVisible();
+
+    const adminContext = await browser.newContext();
+    const admin = await adminContext.newPage();
+    admin.on("dialog", (dialog) => dialog.accept());
+    await loginAdmin(admin);
+    await expect(admin.getByRole("heading", { name: "Megathon" })).toBeVisible();
+    await admin.goto(`/admin/markets/${megathonWinnerMarketId}`);
+    await admin.getByRole("button", { name: "Lock market" }).click();
+    await expect(admin.getByText(/Resolve/)).toBeVisible();
+    await admin.getByLabel("Winning outcome").selectOption({ label: "Team Orbit" });
+    await admin.getByLabel(/I confirm this is the official result/).check();
+    await admin.getByRole("button", { name: "Resolve and score" }).click();
+    await expect(admin.getByText("This market has already been resolved.")).toBeVisible();
+
+    await orbit.page.goto(`/m/${megathonWinnerMarketId}`);
+    await expect(orbit.page.getByRole("link", { name: /Share your receipt/ })).toBeVisible();
+    await orbit.page.getByRole("link", { name: /Share your receipt/ }).click();
+    await expect(orbit.page.getByRole("heading", { name: /Orbit Caller called Team Orbit/ })).toBeVisible();
+
+    await nova.page.goto(`/m/${megathonWinnerMarketId}`);
+    await expect(nova.page.getByText(/did not match the result|This prediction did not match/)).toBeVisible();
+
+    await orbit.context.close();
+    await nova.context.close();
+    await talk.context.close();
+    await adminContext.close();
+  });
+
+  test("admin event scoping, stage modes, pause, and public mobile journey stay isolated", async ({ browser }) => {
+    const adminContext = await browser.newContext();
+    const admin = await adminContext.newPage();
+    admin.on("dialog", (dialog) => dialog.accept());
+    await loginAdmin(admin, "/admin/events/megatalkTesting");
+
+    await expect(admin.getByRole("heading", { name: "megatalkTesting" })).toBeVisible();
+    await admin.getByRole("link", { name: "Payments" }).click();
+    await expect(admin).toHaveURL(/\/admin\/payments\?eventSlug=megatalkTesting/);
+    await expect(admin.getByText("Operating on event")).toBeVisible();
+    await expect(admin.getByRole("heading", { name: "megatalkTesting" })).toBeVisible();
+
+    await admin.goto("/admin/stage?eventSlug=megatalkTesting");
+    await admin.getByLabel("Stage mode").selectOption("leaderboard");
+    await admin.getByRole("button", { name: "Update stage" }).click();
+    await expect(admin).toHaveURL(/\/admin\/stage\?eventSlug=megatalkTesting/);
+
+    await admin.goto("/stage/megatalkTesting");
+    await expect(admin.getByText("Top Oracles").or(admin.getByText("No scored entries yet."))).toBeVisible();
+
+    await admin.goto("/admin/stage?eventSlug=megatalkTesting");
+    await admin.getByLabel("Stage mode").selectOption("live");
+    await admin.getByLabel("Emergency pause sensitive user actions").check();
+    await admin.getByRole("button", { name: "Update stage" }).click();
+
+    const participant = await joinRoom(browser, "megatalkTesting", "Paused Player", "other");
+    await participant.page.goto("/e/megatalkTesting");
+    await expect(participant.page.getByText("Predictions are paused")).toBeVisible();
+
+    await admin.goto("/admin/stage?eventSlug=megatalkTesting");
+    await admin.getByLabel("Emergency pause sensitive user actions").uncheck();
+    await admin.getByRole("button", { name: "Update stage" }).click();
+    await participant.page.reload();
+    await expect(participant.page.getByText("Predictions are paused")).toHaveCount(0);
+
+    await participant.context.close();
+    await adminContext.close();
+  });
+});

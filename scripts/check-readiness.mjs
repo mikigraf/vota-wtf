@@ -38,6 +38,9 @@ if (!response.ok || report.ready !== true) {
       if (check.status === "fail") console.error(`- ${group.title}: ${check.label} - ${check.detail}`);
     }
   }
+  for (const failure of report.failures || []) {
+    console.error(`- ${failure.group}: ${failure.label} - ${failure.detail}`);
+  }
   process.exit(1);
 }
 

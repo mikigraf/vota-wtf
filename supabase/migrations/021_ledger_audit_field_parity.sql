@@ -22,6 +22,7 @@ declare
   v_purchase purchases%rowtype;
   v_wallet wallets%rowtype;
   v_credited boolean := false;
+  v_previous_status text;
 begin
   select * into v_purchase from purchases where id = p_purchase_id for update;
   if not found then raise exception 'Purchase not found.'; end if;
@@ -29,9 +30,18 @@ begin
     return jsonb_build_object('purchase', to_jsonb(v_purchase), 'credited', false);
   end if;
   if p_status <> 'paid' then
-    update purchases set status = p_status where id = p_purchase_id returning * into v_purchase;
-    insert into admin_audit_logs (action, entity_type, entity_id, details, ip)
-    values ('payment_status', 'purchase', p_purchase_id::text, jsonb_build_object('status', v_purchase.status), p_ip);
+    v_previous_status := v_purchase.status;
+    if v_purchase.status is distinct from p_status then
+      update purchases set status = p_status where id = p_purchase_id returning * into v_purchase;
+      insert into admin_audit_logs (action, entity_type, entity_id, details, ip)
+      values (
+        'payment_status',
+        'purchase',
+        p_purchase_id::text,
+        jsonb_build_object('previousStatus', v_previous_status, 'status', v_purchase.status),
+        p_ip
+      );
+    end if;
     return jsonb_build_object('purchase', to_jsonb(v_purchase), 'credited', false);
   end if;
 

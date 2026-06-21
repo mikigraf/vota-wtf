@@ -17,7 +17,7 @@ import { verifyAndCreditPurchase } from "@/lib/payments";
 import { hasCompletedProfile } from "@/lib/participants";
 import { firstSearchParam } from "@/lib/search-params";
 import type { LedgerEntry } from "@/lib/types";
-import { credits, mbucks } from "@/lib/utils";
+import { credits, mbucks, pct } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -86,7 +86,21 @@ export default async function EventPage({
     : [];
   const leaders = groups.overall.slice(0, 5);
   const openMarkets = state.markets.filter((market) => market.status === "open").length;
-  const nextOpenMarket = state.markets.find((market) => market.status === "open");
+  const participantOrderedMarkets = [...state.markets].sort((a, b) => compareMarketForParticipant(a, b, state.event.featuredMarketId));
+  const featuredVisibleMarket = state.event.featuredMarketId
+    ? participantOrderedMarkets.find((market) => market.id === state.event.featuredMarketId)
+    : undefined;
+  const nextOpenMarket = participantOrderedMarkets.find((market) => market.status === "open");
+  const openFeaturedMarket = featuredVisibleMarket?.status === "open" ? featuredVisibleMarket : undefined;
+  const heroMarket = openFeaturedMarket || nextOpenMarket || featuredVisibleMarket;
+  const heroLeader = heroMarket ? leadingOutcomeForEvent(heroMarket) : undefined;
+  const showMobileTopUp = Boolean(session);
+  const heroCta =
+    !heroMarket ? "Waiting" :
+    heroMarket.status === "open" ? "Predict" :
+    heroMarket.status === "locked" ? "View locked card" :
+    heroMarket.status === "resolved" ? "See result" :
+    "View card";
   return (
     <Shell flush>
       <PublicTopBar
@@ -95,22 +109,86 @@ export default async function EventPage({
           <>
             <span className="font-mono-vota text-xs text-white/80">{session?.wallet ? mbucks(session.wallet.balanceCredits) : "1,000 starter MBucks"}</span>
             <LiveDot />
-            <ButtonLink href={`/join/${slug}?next=${encodeURIComponent(`/e/${slug}`)}`} variant="ghost" className="min-h-9 border-0 px-4">
-              Edit profile
-            </ButtonLink>
+            {session ? (
+              <span className="rounded-full bg-white/10 px-3 py-1 text-[10px] font-black uppercase text-white/80">{session.participant.role}</span>
+            ) : null}
           </>
         }
       />
-      <Tape
-        items={[
-          { label: "OPEN", value: `${openMarkets} MARKETS`, tone: "mint" },
-          { label: "TOP ORACLE", value: leaders[0]?.nickname || "SOON", tone: "ember" },
-          { label: "CREDITS", value: session?.wallet ? mbucks(session.wallet.balanceCredits) : "FREE TO PLAY", tone: "white" },
-          { label: "ROLE BATTLE", value: "BUILDERS / SPONSORS / INVESTORS", tone: "mint" }
-        ]}
-      />
-      <Container className="grid gap-6 px-5 py-10 md:py-14">
-        <header className="grid gap-6 md:grid-cols-[1fr_auto] md:items-end">
+      <div className="hidden sm:block">
+        <Tape
+          items={[
+            { label: "OPEN", value: `${openMarkets} MARKETS`, tone: "mint" },
+            { label: "TOP ORACLE", value: leaders[0]?.nickname || "SOON", tone: "ember" },
+            { label: "CREDITS", value: session?.wallet ? mbucks(session.wallet.balanceCredits) : "FREE TO PLAY", tone: "white" },
+            { label: "ROLE BATTLE", value: "BUILDERS / SPONSORS / INVESTORS", tone: "mint" }
+          ]}
+        />
+      </div>
+      <Container className="grid gap-2 px-2 py-2 sm:gap-4 sm:px-5 sm:py-8 lg:gap-6 lg:py-10">
+        {checkout ? (
+          <Card className="grid gap-4 border-mint bg-mint/10 p-4 md:grid-cols-[1fr_auto] md:items-center md:p-5">
+            <div>
+              <h2 className="text-xl font-black">Checkout status</h2>
+              <CheckoutReturnStatus purchaseId={checkout} initialMessage={checkoutMessage} />
+            </div>
+            <ButtonLink href={heroMarket ? `/m/${heroMarket.id}` : `/e/${slug}`}>
+              {heroMarket?.status === "open" ? "Make a prediction" : "Back to markets"}
+            </ButtonLink>
+          </Card>
+        ) : null}
+        <section className="grid gap-1.5 lg:hidden">
+          <Card className="border-ink p-2 shadow-panel sm:p-4">
+            <div className="flex items-center justify-between gap-2">
+              <Kicker className="text-[10px]">Live room</Kicker>
+              <span className="font-mono-vota rounded-full bg-soft px-2 py-0.5 text-[9px] font-bold uppercase text-muted">
+                {session?.wallet ? mbucks(session.wallet.balanceCredits) : "1,000 starter"} · {openMarkets} open
+              </span>
+            </div>
+            <div className="mt-1 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+              <div className="min-w-0">
+                <h1 className="line-clamp-2 text-sm font-black leading-tight sm:text-xl">
+                  {heroMarket ? heroMarket.title : "Markets opening soon"}
+                </h1>
+                <p className="mt-0.5 truncate text-xs font-bold text-muted sm:text-sm">
+                  {heroMarket
+                    ? heroMarket.status === "locked"
+                      ? "Predictions locked. Watch the reveal."
+                      : heroMarket.status === "resolved"
+                        ? "Result is in. Check your receipt."
+                      : heroMarket.blindLaunch.active
+                        ? `${heroMarket.blindLaunch.predictedCount} predicted. Signal hidden.`
+                        : heroLeader
+                          ? `${heroLeader.label} leads ${pct(heroLeader.stageSignal)}`
+                          : "Pick the next open card."
+                    : "Stay ready for the organizer's next card."}
+                </p>
+              </div>
+              {heroMarket ? (
+                <ButtonLink className="min-h-11 shrink-0 px-3 text-xs sm:px-5 sm:text-sm" href={`/m/${heroMarket.id}`}>
+                  {heroCta}
+                </ButtonLink>
+              ) : (
+                <span className="inline-flex min-h-11 shrink-0 items-center justify-center rounded-full border border-line bg-soft px-3 text-xs font-black text-muted sm:px-5 sm:text-sm">
+                  {heroCta}
+                </span>
+              )}
+            </div>
+            {showMobileTopUp ? (
+              <div className="mt-1.5 rounded-xl border border-line bg-paper p-2 sm:mt-3 sm:p-3">
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto] sm:items-center">
+                  <p className="text-xs font-bold leading-4 text-muted">{SAFE_COPY.checkout}</p>
+                  <CheckoutButton
+                    returnTo={`/e/${slug}`}
+                    disabled={state.event.emergencyPaused}
+                    disabledReason="Organizer pause is on. MegaBuck top-ups reopen soon."
+                  />
+                </div>
+              </div>
+            ) : null}
+          </Card>
+        </section>
+        <header className="hidden gap-6 lg:grid lg:grid-cols-[1fr_auto] lg:items-end">
           <div>
             <Kicker>Markets for what the room believes</Kicker>
             <DisplayTitle className="mt-3 max-w-4xl text-[44px] md:text-[76px]">
@@ -122,13 +200,13 @@ export default async function EventPage({
             </p>
           </div>
           <div className="flex flex-wrap gap-3">
-            <ButtonLink href={nextOpenMarket ? `/m/${nextOpenMarket.id}` : `/e/${slug}`}>
-              {nextOpenMarket ? "Make your first call" : "Markets opening soon"}
+            <ButtonLink href={heroMarket ? `/m/${heroMarket.id}` : `/e/${slug}`}>
+              {heroMarket?.status === "open" ? "Make your first call" : heroMarket ? heroCta : "Markets opening soon"}
             </ButtonLink>
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-4">
+        <section className="hidden gap-3 lg:grid lg:grid-cols-4">
           <Stat label="Your profile" value={session ? session.participant.nickname : "Guest"} />
           <Stat label="Wallet" value={session?.wallet ? mbucks(session.wallet.balanceCredits) : "Join"} />
           <Stat label="Open markets" value={openMarkets} />
@@ -145,13 +223,11 @@ export default async function EventPage({
         ) : null}
 
         {session ? (
-          <Card className="grid gap-4 bg-paper md:grid-cols-[1fr_auto] md:items-center">
+          <Card className="hidden gap-4 bg-paper lg:grid lg:grid-cols-[1fr_auto] lg:items-center">
             <div>
-              <h2 className="text-xl font-extrabold">Supporter test checkout</h2>
+              <h2 className="text-xl font-extrabold">Add MegaBucks</h2>
               <p className="mt-1 text-sm font-semibold text-muted">{SAFE_COPY.checkout}</p>
-              {checkout ? (
-                <CheckoutReturnStatus purchaseId={checkout} initialMessage={checkoutMessage} />
-              ) : checkoutMessage ? (
+              {!checkout && checkoutMessage ? (
                 <p className="mt-2 text-sm font-black text-mint">{checkoutMessage}</p>
               ) : null}
             </div>
@@ -165,9 +241,13 @@ export default async function EventPage({
 
         <PublicEventLive eventSlug={slug} initialState={state} />
 
-        {session ? <MegaBuckHistory entries={ledgerEntries} /> : null}
+        {session ? (
+          <div className="hidden lg:block">
+            <MegaBuckHistory entries={ledgerEntries} />
+          </div>
+        ) : null}
 
-        <Card>
+        <Card className="hidden lg:block">
           <h2 className="font-expanded text-xl font-black">Top Oracles</h2>
           <div className="mt-3 grid gap-2">
             {leaders.length === 0 ? (
@@ -183,7 +263,7 @@ export default async function EventPage({
           </div>
         </Card>
 
-        <section className="grid gap-4 lg:grid-cols-3">
+        <section className="hidden gap-4 lg:grid lg:grid-cols-3">
           <LeaderboardMini title="Builders" rows={groups.byRole.builder.slice(0, 4)} />
           <LeaderboardMini title="Sponsors" rows={groups.byRole.sponsor.slice(0, 4)} />
           <LeaderboardMini title="Investors" rows={groups.byRole.investor.slice(0, 4)} />
@@ -194,6 +274,25 @@ export default async function EventPage({
       </Container>
     </Shell>
   );
+}
+
+function compareMarketForParticipant(
+  a: Awaited<ReturnType<typeof readPublicStateData>>["markets"][number],
+  b: Awaited<ReturnType<typeof readPublicStateData>>["markets"][number],
+  featuredMarketId?: string
+) {
+  const statusRank = (status: string) => (status === "open" ? 0 : status === "locked" ? 1 : status === "resolved" ? 2 : 3);
+  const statusDelta = statusRank(a.status) - statusRank(b.status);
+  if (statusDelta !== 0) return statusDelta;
+  if (featuredMarketId) {
+    if (a.id === featuredMarketId && b.id !== featuredMarketId) return -1;
+    if (b.id === featuredMarketId && a.id !== featuredMarketId) return 1;
+  }
+  return a.title.localeCompare(b.title);
+}
+
+function leadingOutcomeForEvent(market: Awaited<ReturnType<typeof readPublicStateData>>["markets"][number]) {
+  return [...market.outcomes].sort((a, b) => b.stageSignal - a.stageSignal || b.peopleCount - a.peopleCount)[0];
 }
 
 function MegaBuckHistory({ entries }: { entries: LedgerEntry[] }) {

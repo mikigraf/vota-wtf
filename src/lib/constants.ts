@@ -6,6 +6,7 @@ export const STARTER_CREDITS = 1000;
 export const TEST_CHECKOUT_CREDITS = 100;
 export const TEST_CHECKOUT_EUR = 1;
 export const INITIAL_STAKE_AMOUNT = 100;
+export const PLATFORM_PRIOR_CREDITS_PER_OUTCOME = 100;
 export const MAX_ACTION_STAKE = 250;
 export const COOLDOWN_SECONDS = 30;
 export const MAX_HUMAN_MARKET_SHARE = 0.15;
@@ -25,6 +26,6 @@ export const ROLE_LABELS: Record<Role, string> = {
 
 export const SAFE_COPY = {
   noPayout: "No real-money payouts. Correct calls settle internal MegaBucks and earn reputation.",
-  checkout: "Test EUR 1 -> +100 MBucks. No real charge in MEGATHON test mode. MegaBucks stay inside vota.wtf.",
+  checkout: "Add 100 MBucks in MEGATHON test mode. No real charge. MegaBucks stay inside vota.wtf.",
   whaleGuard: "This market cannot absorb that much yet."
 };

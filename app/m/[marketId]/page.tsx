@@ -77,34 +77,37 @@ export default async function MarketPage({
         right={
           <>
             <LiveDot label={state.status} />
-            <ButtonLink href={`/e/${event?.slug || DEFAULT_EVENT_SLUG}`} variant="ghost" className="min-h-9 border-0 px-4">
-              Event home
+            <ButtonLink href={`/e/${event?.slug || DEFAULT_EVENT_SLUG}`} variant="ghost" className="min-h-11 border-0 px-3 text-xs sm:px-4 sm:text-sm">
+              <span className="sm:hidden">Home</span>
+              <span className="hidden sm:inline">Event home</span>
             </ButtonLink>
           </>
         }
       />
-      <Container className="grid gap-6 px-5 py-8">
-        <header className="grid gap-5 overflow-hidden rounded-2xl bg-ink p-6 text-white md:grid-cols-[minmax(0,1fr)_300px]">
+      <Container className="grid gap-1.5 px-2 py-1.5 sm:gap-5 sm:px-5 sm:py-6 lg:gap-6 lg:py-8">
+        <header className="grid gap-1 overflow-hidden rounded-lg bg-ink p-1.5 text-white sm:gap-3 sm:rounded-2xl sm:p-6 md:grid-cols-[minmax(0,1fr)_300px] md:gap-5">
           <div>
-            <div className="mb-3 flex flex-wrap gap-2">
-              <span className="font-mono-vota rounded-full bg-white/10 px-3 py-1 text-[10px] font-bold uppercase">{state.category}</span>
+            <div className="mb-1 flex flex-nowrap items-center justify-between gap-1.5 sm:mb-3 sm:flex-wrap sm:justify-start sm:gap-2">
+              <span className="font-mono-vota rounded-full bg-white/10 px-2.5 py-1 text-[9px] font-bold uppercase sm:px-3 sm:text-[10px]">{state.category}</span>
               <StatusPill>{state.status}</StatusPill>
             </div>
-            <h1 className="font-expanded text-4xl font-black leading-tight md:text-5xl">{state.title}</h1>
-            <p className="mt-4 max-w-3xl font-semibold leading-6 text-white/70">{state.description}</p>
-            <Kicker className="mt-4 text-mint">Resolution: {state.resolutionRule}</Kicker>
+            <h1 className="font-expanded line-clamp-2 text-base font-black leading-tight sm:text-4xl md:text-5xl">{state.title}</h1>
+            <p className="mt-3 hidden max-w-3xl font-semibold leading-6 text-white/70 sm:block">{state.description}</p>
+            <Kicker className="mt-3 hidden text-mint sm:block">Resolution: {state.resolutionRule}</Kicker>
           </div>
-          <div className="grid gap-3">
+          <div className="hidden gap-3 md:grid">
             {state.imageUrl ? <img src={state.imageUrl} alt="" className="h-44 w-full rounded-xl object-cover" /> : null}
-            <ButtonLink href={`/e/${event?.slug || DEFAULT_EVENT_SLUG}`} variant="secondary">
-              Event home
-            </ButtonLink>
           </div>
         </header>
         {checkout ? (
-          <Card className="bg-paper">
-            <h2 className="text-xl font-extrabold">Supporter checkout</h2>
-            <CheckoutReturnStatus purchaseId={checkout} initialMessage={checkoutMessage} />
+          <Card className="grid gap-3 bg-paper p-3 sm:grid-cols-[1fr_auto] sm:items-center sm:p-5">
+            <div>
+              <h2 className="text-base font-extrabold sm:text-xl">Supporter checkout</h2>
+              <CheckoutReturnStatus purchaseId={checkout} initialMessage={checkoutMessage} />
+            </div>
+            <ButtonLink href={`/m/${market.id}`} className="min-h-11 text-xs sm:text-sm">
+              Continue prediction
+            </ButtonLink>
           </Card>
         ) : null}
         <PredictionPanel
@@ -113,6 +116,14 @@ export default async function MarketPage({
           initialUser={userState}
           initialEmergencyPaused={Boolean(event?.emergencyPaused)}
         />
+        <section className="grid gap-2 rounded-xl border border-line bg-white p-3 text-sm sm:hidden">
+          <h2 className="text-sm font-black">Market details</h2>
+          <p className="font-semibold leading-5 text-muted">{state.description}</p>
+          <div className="rounded-lg bg-paper p-2">
+            <div className="font-mono-vota text-[10px] font-bold uppercase text-faded">Resolution</div>
+            <p className="mt-1 font-semibold leading-5 text-ink">{state.resolutionRule}</p>
+          </div>
+        </section>
       </Container>
     </Shell>
   );

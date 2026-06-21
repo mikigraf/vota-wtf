@@ -25,7 +25,17 @@ export async function GET(request: NextRequest) {
   return json({
     ready: report.ready,
     generatedAt: report.generatedAt,
-    counts: report.counts
+    counts: report.counts,
+    failures: report.groups.flatMap((group) =>
+      group.checks
+        .filter((check) => check.status === "fail")
+        .map((check) => ({
+          group: group.title,
+          id: check.id,
+          label: check.label,
+          detail: check.detail
+        }))
+    )
   }, {
     status: readinessHttpStatus(report),
     headers: { "Cache-Control": "no-store" }

@@ -5,15 +5,16 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 ## Current Evidence
 
 - `npm test`, `npm run lint`, `npm run build`, and local `npm run readiness` are the required code gates.
+- `npm run load:500` is the local engine load gate for 500 participant/profile/prediction flows, idempotency replays, and winner-pool settlement math.
 - `npm run verify:deploy` is the required deployed gate. It fails unless `READINESS_URL` points at the deployed origin or `/api/readiness`.
-- Supabase production must have every migration through `supabase/migrations/028_human_room_signal_snapshot.sql` applied.
+- Supabase production must have every migration through `supabase/migrations/034_prediction_serialization_readiness.sql` applied.
 - This sandbox cannot bind `127.0.0.1:3000`, so local browser and mobile screenshots are not sufficient evidence here.
 
 ## Critical Findings
 
 | Issue | What was broken | Why it matters | Required fix / validation |
 | --- | --- | --- | --- |
-| Market resolution reliability | Supabase resolution previously hit unsafe SQL paths and could conflict with wallet/participant locks. | Admin resolve is the highest-pressure stage action; it cannot fail live. | Apply migrations through `028`, then lock and resolve a throwaway deployed market from `/admin/markets`. Confirm the market moves to resolution mode, winning users receive settlement ledger entries, and `/api/readiness` stays green. |
+| Market resolution reliability | Supabase resolution previously hit unsafe SQL paths and could conflict with wallet/participant locks. | Admin resolve is the highest-pressure stage action; it cannot fail live. | Apply migrations through `034`, then lock and resolve a throwaway deployed market from `/admin/markets`. Confirm the market moves to resolution mode, winning users receive proportional winner-pool settlement ledger entries, and `/admin/readiness` stays green. |
 | Mobile participant recovery | Mobile browser/IP changes could create duplicate sessions or lose wallet state. | People scanning QR codes on event Wi-Fi must not restart or lose their MegaBucks. | Confirm a phone can join, close the tab, switch network/Wi-Fi, reopen `/j/megathon-2026`, and keep the same profile/wallet. |
 | Blocked prediction switches | A zero-MegaBuck switch could preview impossible movement when Whale Guard blocked the action. | Users see the market as unfair if the UI suggests movement they cannot commit. | In a seeded market, try an oversized/switch prediction and confirm the UI shows the cap and the confirm button stays disabled. |
 | Voided/stale market pages | A participant could keep a direct market URL open after the admin voided it. | Stage operators need void to immediately remove broken cards from participant flow. | Open a market on mobile, void it from admin, then confirm the phone redirects to the event page and cannot submit a prediction. |
@@ -27,13 +28,15 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 | --- | --- | --- | --- |
 | Profile edit avatar handling | Editing a profile with an existing generated/uploaded avatar could resend the old URL as an upload. | Profile edit should feel harmless during live onboarding. | On mobile and desktop, update name/role without choosing a new photo; confirm the avatar remains stable and no error appears. |
 | Stage featured market fallback | Hiding/voiding the featured market could leave stage mode pointing at an unavailable card. | The projector must never show a dead market. | Hide and void the featured market from admin; confirm stage falls back to a valid market or join mode. |
-| Resolution reveal fallback | Resolution mode could fail if the currently featured market was unresolved even when another resolved stage market existed. | Operators should be able to hit resolution reveal under pressure without hand-selecting the exact market first. | Apply migration `027`, resolve one market while another unresolved market is featured, then switch to resolution mode without selecting a market. |
+| Resolution reveal fallback | Resolution mode could fail if the currently featured market was unresolved or if a non-resolved market was featured while resolution mode was active. | Operators should be able to hit resolution reveal under pressure without hand-selecting the exact market first. | Apply migrations through `034`, resolve one market while another unresolved market is featured, then switch to resolution mode and feature an open market. Confirm resolution either uses a resolved market or automatically returns to live mode. |
 | Stage control response shape | Supabase and local stage-control responses diverged. | Admin UI refreshes must behave the same in production as local tests. | Use `/admin/stage` to switch between join, live, role battle, humans vs agents, leaderboard, and resolution. |
+| Stage live/resolution mode mix-up | Resolved markets could be selected for live, role battle, or humans-vs-agents modes. | The projector can make a finished card look live again, confusing the MC and room. | Apply migrations through `034`; live/role modes must reject or fall back to open/locked stage markets, while resolution mode continues to use resolved markets only. |
 | Production auto-seeding | Supabase auto-seeding could insert demo/live seed data on first production read. | Demo markets and participants must not appear in the live event by accident. | Keep `VOTA_ENABLE_PRODUCTION_AUTO_SEED` unset in production unless intentionally reseeding a disposable environment. Confirm root `/` redirects to `/join/${NEXT_PUBLIC_EVENT_SLUG}`. |
 | Payment orphan recovery | If Mollie payment creation succeeds but DB attach fails, webhook lookup by Mollie id could miss the purchase. | A paid test checkout could need manual reconciliation. | Webhook/status verification now recovers by reading Mollie metadata `purchaseId` when lookup by Mollie id fails. Still verify one deployed checkout end-to-end before doors open. |
-| Runtime DB contract readiness | Static migration tests do not prove the deployed Supabase project has every required RPC signature. | Admin actions can fail if the app deploy is ahead of database migrations. | Add a DB schema-version/contract RPC after the event; for today, manually run migrations through `027` and perform live admin create/open/lock/resolve/void smoke tests. |
+| Runtime DB contract readiness | Static migration tests do not prove the deployed Supabase project has every required RPC signature. | Admin actions can fail if the app deploy is ahead of database migrations. | `/admin/readiness` now calls `readiness_contract_tx()` and fails if checkout intents, profile lock, idempotency, ledger settlement columns, or pool settlement RPCs are missing. |
+| Mobile first-screen density | The participant event and market pages can regress into desktop-style landing content that pushes the prediction action below the fold. | Live users should understand the next action immediately after scanning a QR code. | On a real phone, confirm `/join/<event>`, `/e/<event>`, and `/m/<market>` show the required action without hunting: name/role/enter, live market CTA, outcome choices, amount, and submit. Optional avatar, checkout, history, and leaderboards may sit behind disclosures or below the fold. |
 | MCP token scope | Admin can still create broad MCP tokens that are easy to misuse during a live demo. | Agents should not accidentally trade as the wrong human or fail headless demos. | Prefer participant-scoped tokens for demos. Future hardening should reject global tokens for `place_prediction` unless explicitly marked headless-agent-only. |
-| Payment status audit | Failed/canceled payment status changes are not audited as explicitly as credited payments. | Operators need a complete audit trail after the event. | After the event, add audit rows for failed/canceled/pending terminal checks in local and Supabase payment settlement paths. |
+| Payment status audit | Failed/canceled payment status changes previously had weaker local audit coverage than credited payments. | Operators need a complete audit trail after the event. | Local and Supabase settlement paths now write `payment_status` audit rows for failed/canceled transitions. Before doors open, force one failed/canceled test checkout and confirm `/admin/audit` records it without issuing MegaBucks. |
 | Deployed readiness proof | A green local build does not prove public QR, checkout callback, admin, and stage URLs. | The event operator needs external proof links before doors open. | Set all `NEXT_PUBLIC_PROOF_*` URLs and run `READINESS_URL=https://<domain> npm run verify:deploy`. |
 
 ## Minor Findings
@@ -54,11 +57,12 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 
 ## Sequenced Roadmap
 
-1. Apply Supabase migrations through `028` and run `npm run verify:deploy` against the deployed domain.
-2. Run the critical smoke flow with two phones and one laptop: join, profile, predict, switch, blocked cap, checkout, void redirect, lock, resolve, receipt, leaderboard, and stage reveal.
-3. Run the admin operator flow: login, create/open/feature/lock/resolve/void a throwaway market, switch all stage modes, inspect audit logs, and reconcile payments.
-4. Run the projector flow: `/stage/megathon-2026` on the real screen, QR scan from the back of the room, live updates, blind launch unlock, role battle, humans vs agents, leaderboard, and resolution reveal.
-5. Freeze market content and environment variables. After freeze, only fix P0/P1 regressions found during the smoke run.
+1. Apply Supabase migrations through `034` and run `npm run verify:deploy` against the deployed domain.
+2. Run `npm run load:500` locally before the final deploy to confirm the market engine can process 500 participant journeys, idempotent retries, and winner-pool settlement.
+3. Run the critical smoke flow with two phones and one laptop: join, profile, predict, switch, blocked cap, checkout, void redirect, lock, resolve, receipt, leaderboard, and stage reveal.
+4. Run the admin operator flow: login, create/open/feature/lock/resolve/void a throwaway market, switch all stage modes, inspect audit logs, and reconcile payments.
+5. Run the projector flow: `/stage/megathon-2026` on the real screen, QR scan from the back of the room, live updates, blind launch unlock, role battle, humans vs agents, leaderboard, and resolution reveal.
+6. Freeze market content and environment variables. After freeze, only fix P0/P1 regressions found during the smoke run.
 
 ## Parallel Work
 
@@ -72,6 +76,7 @@ This plan is the stage-day gate for `vota.wtf`. Automated checks prove the serve
 Go live only when:
 
 - `npm run verify:deploy` passes against the public domain.
+- `npm run load:500` passes locally.
 - `/admin/readiness` has no failed checks.
 - At least two real mobile devices complete the participant smoke flow.
 - Admin can resolve a throwaway market and settlement appears in leaderboard/receipt.

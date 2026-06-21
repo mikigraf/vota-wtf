@@ -1,3 +1,4 @@
+import { ShareReceiptButton } from "@/components/share-receipt-button";
 import { ButtonLink, Container, Kicker, Shell } from "@/components/ui";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { readReceiptStoreData } from "@/lib/data";
@@ -12,7 +13,7 @@ export default async function ReceiptPromoPage({ params }: { params: Promise<{ i
   const eventSlug = store.events[0]?.slug || DEFAULT_EVENT_SLUG;
   return (
     <Shell className="overflow-hidden bg-ink text-white" flush>
-      <Container className="max-w-5xl px-5 py-6">
+      <Container className="max-w-5xl px-3 py-3 sm:px-5 sm:py-6">
         <style>{`
           @keyframes promo-rise {
             0% { opacity: 0; transform: translateY(28px) scale(0.98); }
@@ -28,27 +29,31 @@ export default async function ReceiptPromoPage({ params }: { params: Promise<{ i
           .promo-frame:nth-child(3) { animation-delay: 2.4s; }
           .signal-sweep { animation: signal-sweep 4s linear infinite; }
         `}</style>
-        <header className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <header className="flex flex-wrap items-center justify-between gap-3 py-2 sm:py-4">
           <div>
             <Kicker className="text-mint">vota.wtf receipt cut</Kicker>
-            <h1 className="font-expanded mt-2 break-words text-4xl font-black leading-none sm:text-7xl">{promo.title}</h1>
-            <p className="mt-3 max-w-2xl break-words text-lg font-bold text-white/65">{promo.subtitle}</p>
+            <h1 className="font-expanded mt-1 break-words text-2xl font-black leading-none sm:mt-2 sm:text-7xl">{promo.title}</h1>
+            <p className="mt-2 hidden max-w-2xl break-words text-lg font-bold text-white/65 sm:block">{promo.subtitle}</p>
           </div>
-          <ButtonLink href={`/e/${eventSlug}`} variant="secondary">Back</ButtonLink>
+          <ButtonLink href={`/e/${eventSlug}`} variant="secondary" className="min-h-11 px-4 text-xs sm:text-sm">Back</ButtonLink>
         </header>
-        <section className="relative mt-8 min-h-[560px] overflow-hidden rounded-2xl border border-white/10 bg-[#101315] p-5 shadow-stage">
+        <section className="relative mt-3 min-h-[320px] overflow-hidden rounded-2xl border border-white/10 bg-[#101315] p-3 shadow-stage sm:mt-8 sm:min-h-[560px] sm:p-5">
           <div className="signal-sweep absolute inset-y-0 w-1/2 bg-gradient-to-r from-transparent via-mint/25 to-transparent" />
-          <div className="relative grid min-h-[520px] content-center gap-5">
+          <div className="relative grid min-h-[294px] content-center gap-3 sm:min-h-[520px] sm:gap-5">
             {promo.frames.map((frame) => (
-              <div key={`${frame.kicker}-${frame.headline}`} className="promo-frame rounded-2xl border border-white/10 bg-white/10 p-5 backdrop-blur">
+              <div key={`${frame.kicker}-${frame.headline}`} className="promo-frame rounded-2xl border border-white/10 bg-white/10 p-3 backdrop-blur sm:p-5">
                 <Kicker className="text-mint">{frame.kicker}</Kicker>
-                <h2 className="font-expanded mt-2 break-words text-4xl font-black sm:text-6xl">{frame.headline}</h2>
-                <p className="mt-3 break-words text-lg font-bold text-white/70">{frame.detail}</p>
+                <h2 className="font-expanded mt-2 break-words text-2xl font-black sm:text-6xl">{frame.headline}</h2>
+                <p className="mt-2 break-words text-sm font-bold text-white/70 sm:mt-3 sm:text-lg">{frame.detail}</p>
               </div>
             ))}
           </div>
         </section>
-        <p className="mt-5 break-words rounded-xl bg-white/10 p-4 text-sm font-bold text-white/75">{promo.shareCopy}</p>
+        <p className="mt-5 hidden break-words rounded-xl bg-white/10 p-4 text-sm font-bold text-white/75 sm:block">{promo.shareCopy}</p>
+        <div className="sticky bottom-2 z-20 mt-3 grid gap-2 rounded-2xl bg-ink/95 p-2 shadow-stage sm:static sm:mt-4 sm:max-w-xs sm:bg-transparent sm:p-0 sm:shadow-none">
+          <ShareReceiptButton text={promo.shareCopy} />
+          <ButtonLink href={`/e/${eventSlug}`} variant="secondary" className="sm:hidden">Back to vota.wtf</ButtonLink>
+        </div>
       </Container>
     </Shell>
   );

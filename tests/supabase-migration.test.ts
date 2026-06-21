@@ -29,6 +29,12 @@ const guardSessionRecoveryMigration = fs.readFileSync("supabase/migrations/025_g
 const zeroSwitchGuardMigration = fs.readFileSync("supabase/migrations/026_zero_switch_impact_guard.sql", "utf8");
 const stageResolutionFallbackMigration = fs.readFileSync("supabase/migrations/027_stage_resolution_resolved_fallback.sql", "utf8");
 const humanRoomSignalMigration = fs.readFileSync("supabase/migrations/028_human_room_signal_snapshot.sql", "utf8");
+const stageResolutionFeatureGuardMigration = fs.readFileSync("supabase/migrations/029_stage_resolution_feature_guard.sql", "utf8");
+const stageLiveStatusGuardMigration = fs.readFileSync("supabase/migrations/030_stage_live_market_status_guard.sql", "utf8");
+const stageSafeFallbackMigration = fs.readFileSync("supabase/migrations/031_stage_mode_safe_fallbacks.sql", "utf8");
+const platformSignalPriorsMigration = fs.readFileSync("supabase/migrations/032_platform_signal_priors.sql", "utf8");
+const finalHardeningMigration = fs.readFileSync("supabase/migrations/033_live_event_final_hardening.sql", "utf8");
+const predictionSerializationMigration = fs.readFileSync("supabase/migrations/034_prediction_serialization_readiness.sql", "utf8");
 const dataLayer = fs.readFileSync("src/lib/data.ts", "utf8");
 const marketForm = fs.readFileSync("components/market-form.tsx", "utf8");
 const marketUpdateRoute = fs.readFileSync("app/api/admin/markets/[id]/route.ts", "utf8");
@@ -40,6 +46,9 @@ const eventPage = fs.readFileSync("app/e/[eventSlug]/page.tsx", "utf8");
 const joinPage = fs.readFileSync("app/join/[eventSlug]/page.tsx", "utf8");
 const publicEventLive = fs.readFileSync("components/public-event-live.tsx", "utf8");
 const publicMarketPage = fs.readFileSync("app/m/[marketId]/page.tsx", "utf8");
+const receiptPage = fs.readFileSync("app/receipt/[id]/page.tsx", "utf8");
+const receiptPromoPage = fs.readFileSync("app/receipt/[id]/promo/page.tsx", "utf8");
+const shareReceiptButton = fs.readFileSync("components/share-receipt-button.tsx", "utf8");
 const publicStateRoute = fs.readFileSync("app/api/events/[slug]/public-state/route.ts", "utf8");
 const publicLeaderboardRoute = fs.readFileSync("app/api/leaderboard/[eventSlug]/route.ts", "utf8");
 const predictRoute = fs.readFileSync("app/api/markets/[id]/predict/route.ts", "utf8");
@@ -48,6 +57,12 @@ const stagePage = fs.readFileSync("app/stage/[eventSlug]/page.tsx", "utf8");
 const adminStagePage = fs.readFileSync("app/admin/stage/page.tsx", "utf8");
 const stageView = fs.readFileSync("components/stage-view.tsx", "utf8");
 const stageRoute = fs.readFileSync("app/api/admin/stage/route.ts", "utf8");
+const httpHelper = fs.readFileSync("src/lib/http.ts", "utf8");
+const adminLoginPage = fs.readFileSync("app/admin/login/page.tsx", "utf8");
+const participantsPage = fs.readFileSync("app/admin/participants/page.tsx", "utf8");
+const participantsRoute = fs.readFileSync("app/api/admin/participants/route.ts", "utf8");
+const agentEnsureRoute = fs.readFileSync("app/api/admin/agents/ensure/route.ts", "utf8");
+const agentRunRoute = fs.readFileSync("app/api/admin/agents/run-house-agent/route.ts", "utf8");
 const middleware = fs.readFileSync("middleware.ts", "utf8");
 const adminNav = fs.readFileSync("components/admin-nav.tsx", "utf8");
 const agentsPage = fs.readFileSync("app/admin/agents/page.tsx", "utf8");
@@ -59,8 +74,6 @@ const adminReportPage = fs.readFileSync("app/admin/report/page.tsx", "utf8");
 const adminReportRoute = fs.readFileSync("app/api/admin/report/route.ts", "utf8");
 const buildPage = fs.readFileSync("app/build/page.tsx", "utf8");
 const buildDemoPage = fs.readFileSync("app/build/demo/page.tsx", "utf8");
-const receiptPage = fs.readFileSync("app/receipt/[id]/page.tsx", "utf8");
-const receiptPromoPage = fs.readFileSync("app/receipt/[id]/promo/page.tsx", "utf8");
 const predictionPanel = fs.readFileSync("components/prediction-panel.tsx", "utf8");
 const checkoutButton = fs.readFileSync("components/checkout-button.tsx", "utf8");
 const joinForm = fs.readFileSync("components/join-form.tsx", "utf8");
@@ -121,8 +134,9 @@ test("Supabase public grants stay limited to public aggregate state", () => {
   assert.match(publicLeaderboardMigration, /returns table[\s\S]+oracle_score integer[\s\S]+contrarian_score integer/);
   assert.match(publicLeaderboardMigration, /stage_signal_snapshot ->> resolved_outcome_id::text/);
   assert.match(publicLeaderboardMigration, /people_signal_snapshot ->> resolved_outcome_id::text/);
-  assert.match(leaderboardParityMigration, /public_leaderboard_tx\(text\)/);
-  assert.match(leaderboardParityMigration, /Could not patch public_leaderboard_tx popularity expression/);
+  assert.match(leaderboardParityMigration, /create or replace function public_leaderboard_tx\(p_event_slug text\)/);
+  assert.match(leaderboardParityMigration, /stage_signal_snapshot ->> resolved_outcome_id::text/);
+  assert.doesNotMatch(leaderboardParityMigration, /pg_get_functiondef|Could not patch/);
   assert.match(publicLeaderboardMigration, /revoke execute on function public_leaderboard_tx\(text\) from public, anon, authenticated;/);
   assert.match(seedRepairMigration, /where id = '00000000-0000-4000-8000-000000000103'/);
   assert.match(seedRepairMigration, /status = 'open'/);
@@ -165,7 +179,9 @@ test("Supabase public grants stay limited to public aggregate state", () => {
   assert.match(dataLayer, /if \(!directAction\) return emptyDataStore\(\)/);
   assert.match(dataLayer, /async function readSupabasePublicState/);
   assert.match(dataLayer, /publicState\(scopedPublicEventStore\(await readStore\(\), eventSlug\), eventSlug\)/);
-  assert.match(dataLayer, /selectRows\("markets", `select=\*&event_id=eq\.\$\{encodeURIComponent\(event\.id\)\}&status=neq\.draft`\)/);
+  assert.match(dataLayer, /selectRows\("markets", `select=\*&event_id=eq\.\$\{encodeURIComponent\(event\.id\)\}&status=not\.in\.\(draft,voided\)`\)/);
+  assert.match(dataLayer, /source\.markets\.filter\(\(market\) => market\.eventId === event\.id && market\.status !== "draft" && market\.status !== "voided"\)/);
+  assert.match(dataLayer, /source\.markets\.find\(\(item\) => item\.id === marketId && item\.status !== "draft" && item\.status !== "voided"\)/);
   assert.match(dataLayer, /selectRows\("outcomes", `select=\*&market_id=in\.\(\$\{marketIds\.join\(","\)\}\)`\)/);
   assert.match(dataLayer, /selectRows\("market_aggregates", `select=\*&market_id=in\.\(\$\{marketIds\.join\(","\)\}\)`\)/);
   assert.match(dataLayer, /selectRows\("prediction_actions", `select=\*&market_id=in\.\(\$\{marketIds\.join\(","\)\}\)`\)/);
@@ -196,24 +212,86 @@ test("root route starts the live participant journey at join instead of browsing
 });
 
 test("mobile prediction journey avoids accidental commits and nested checkout submits", () => {
-  assert.match(predictionPanel, /useState\(""\)/);
+  assert.match(predictionPanel, /initialUser\.position\?\.outcomeId \|\| ""/);
   assert.match(predictionPanel, /Pick an outcome above/);
   assert.match(predictionPanel, /\? "Choose an outcome"/);
+  assert.match(predictionPanel, /mt-2 grid-cols-2 gap-1\.5 sm:hidden/);
+  assert.doesNotMatch(predictionPanel, /max-h-\[128px\][\s\S]+overflow-y-auto/);
+  assert.match(predictionPanel, /After prediction \$\{pct\(preview\.after\.stageSignal\)\}/);
+  assert.match(predictionPanel, /sticky bottom-2 z-20/);
+  assert.match(predictionPanel, /After prediction/);
+  assert.match(predictionPanel, /grid-cols-\[repeat\(auto-fit,minmax\(56px,1fr\)\)\]/);
+  assert.match(predictionPanel, /sm:grid-cols-\[repeat\(auto-fit,minmax\(72px,1fr\)\)\]/);
+  assert.match(predictionPanel, /showMobileSupportControls/);
+  assert.match(predictionPanel, /setShowMobileCustom/);
+  assert.match(predictionPanel, /showMobileLockedPosition/);
+  assert.match(predictionPanel, /Edit prediction/);
+  assert.match(predictionPanel, /Editing current prediction/);
+  assert.match(predictionPanel, /Cancel/);
+  assert.match(predictionPanel, /preview\.before\.stageSignal/);
+  assert.match(predictionPanel, /walletShortfall/);
+  assert.match(predictionPanel, /guardLimited/);
+  assert.match(predictionPanel, /Add MBucks or lower amount/);
+  assert.match(predictionPanel, /Limit reached/);
+  assert.match(predictionPanel, /MobileMarketMomentum/);
+  assert.match(predictionPanel, /order-2 sm:hidden/);
+  assert.match(predictionPanel, /Back to live room/);
+  assert.match(predictionPanel, /marketClosed \? "block" : "hidden sm:block"/);
+  assert.match(predictionPanel, /order-1 h-fit rounded-xl border border-ink/);
   assert.match(checkoutButton, /type="button"/);
   assert.match(checkoutButton, /usePathname/);
   assert.match(checkoutButton, /body: JSON\.stringify\(\{ returnTo: returnTo \|\| pathname \|\| "\/" \}\)/);
   assert.match(predictionPanel, /returnTo=\{`\/m\/\$\{market\.id\}`\}/);
-  assert.match(predictionPanel, /order-3 lg:col-start-1/);
+  assert.match(predictionPanel, /latestRefreshInput/);
+  assert.match(predictionPanel, /fetch\(`\/api\/markets\/\$\{requested\.marketId\}\/predict\$\{previewParams \?/);
+  assert.match(predictionPanel, /requested\.outcomeId && requested\.status === "open"/);
+  assert.match(predictionPanel, /sequence !== refreshSequence\.current/);
+  assert.match(predictionPanel, /if \(!marketClosed\) setOutcomeId\(outcome\.id\)/);
+  assert.match(predictionPanel, /disabled=\{marketClosed\}/);
+  assert.match(predictionPanel, /order-3 hidden lg:col-start-1 lg:block/);
+  assert.match(eventPage, /Live room/);
+  assert.match(eventPage, /heroLeader/);
+  assert.match(eventPage, /line-clamp-2 text-sm font-black/);
+  assert.match(eventPage, /openFeaturedMarket \|\| nextOpenMarket \|\| featuredVisibleMarket/);
+  assert.match(eventPage, /heroMarket \? \(/);
+  assert.match(eventPage, /!heroMarket \? "Waiting"/);
+  assert.match(eventPage, /\{heroCta\}\s*<\/span>/);
+  assert.match(eventPage, /hidden sm:block[\s\S]+<Tape/);
+  assert.match(eventPage, /hidden gap-6 lg:grid/);
+  assert.match(eventPage, /hidden gap-3 lg:grid lg:grid-cols-4/);
+  assert.match(eventPage, /Add MegaBucks/);
+  assert.match(eventPage, /showMobileTopUp/);
+  assert.match(publicEventLive, /mb-3 hidden flex-wrap/);
+  assert.match(publicEventLive, /grid gap-1 sm:hidden/);
+  assert.match(publicEventLive, /mobilePrimaryMarkets = markets\.slice\(0, 1\)/);
+  assert.match(publicEventLive, /mobileMoreMarkets = markets\.slice\(1\)/);
+  assert.match(publicEventLive, /compareMarketForParticipant/);
+  assert.match(publicEventLive, /leadingOutcome/);
+  assert.match(publicEventLive, /grid grid-cols-\[92px_minmax\(0,1fr\)\] sm:block/);
+  assert.match(publicEventLive, /index > 1 \? "hidden gap-1 sm:grid" : "grid gap-1"/);
+  assert.match(publicEventLive, /\+\{market\.outcomes\.length - 2\} more options/);
+  assert.match(publicMarketPage, /line-clamp-2 text-base font-black leading-tight sm:text-4xl/);
+  assert.match(publicMarketPage, /hidden max-w-3xl font-semibold leading-6 text-white\/70 sm:block/);
+  assert.match(publicMarketPage, /hidden gap-3 md:grid/);
+  assert.doesNotMatch(publicMarketPage, /variant="secondary"[\s\S]+Event home/);
+  assert.match(publicMarketPage, /Market details/);
+  assert.match(publicMarketPage, /<span className="sm:hidden">Home<\/span>/);
+  assert.match(publicMarketPage, /Continue prediction/);
   assert.match(joinPage, /Add a photo if you want/);
+  assert.match(joinPage, /mt-2 text-2xl font-black/);
   assert.match(joinForm, /Photo or avatar optional/);
+  assert.match(joinForm, /Add photo optional/);
+  assert.match(joinForm, /sm:order-last/);
   assert.doesNotMatch(joinForm, /capture="user"/);
   assert.match(joinPage, /initialProfileComplete=\{hasCompletedProfile\(session\?\.participant\)\}/);
   assert.match(joinForm, /initialRoleValue\(initialRole, initialProfileComplete\)/);
+  assert.match(joinForm, /Choose your role/);
+  assert.match(joinForm, /disabled=\{busy \|\| !nickname\.trim\(\) \|\| !role\}/);
   assert.match(joinForm, /newAvatarDataUrl/);
   assert.match(joinForm, /avatarPreviewUrl/);
   assert.match(profileRoute, /submittedAvatar\.startsWith\("data:image\/"\)/);
-  assert.match(profileCompletionMigration, /replace\(v_sql, E'      or v_participant\.avatar_url is null\\n', ''\)/);
-  assert.match(profileCompletionMigration, /lower\(trim\(v_participant\.nickname\)\) = ''oracle''/);
+  assert.match(profileCompletionMigration, /Avatar upload is optional for live joins/);
+  assert.doesNotMatch(profileCompletionMigration, /pg_get_functiondef|replace\(v_sql/);
   assert.doesNotMatch(marketEngineV8Migration, /or v_participant\.avatar_url is null/);
   assert.doesNotMatch(liveHardeningMigration, /or v_participant\.avatar_url is null/);
 });
@@ -359,7 +437,10 @@ test("Supabase prediction transactions cover human stage moves and house agents"
   assert.match(coreMigration, /grant execute on function place_agent_prediction_tx\(uuid, uuid, uuid, integer\) to service_role/);
   assert.match(dataLayer, /const store = await readPublicMarketStoreData\(input\.marketId, sessionId\)/);
   assert.match(dataLayer, /export async function runHouseAgentData/);
-  assert.match(dataLayer, /rpc<Row>\("place_agent_prediction_tx"/);
+  assert.match(dataLayer, /rpc<Row>\("place_agent_prediction_serialized_tx"/);
+  assert.match(predictionSerializationMigration, /create or replace function place_prediction_serialized_tx/);
+  assert.match(predictionSerializationMigration, /pg_advisory_xact_lock\(724118991, market_prediction_lock_key\(p_market_id\)\)/);
+  assert.match(predictionSerializationMigration, /create or replace function place_agent_prediction_serialized_tx/);
   assert.doesNotMatch(adminAgentRoute, /mutateDataStore\(\(store\) =>\s*runHouseAgent/);
   assert.doesNotMatch(externalAgentRoute, /mutateDataStore\(\(store\) =>\s*runHouseAgent/);
   assert.match(adminAgentRoute, /runHouseAgentData/);
@@ -376,12 +457,22 @@ test("prediction placement supports request idempotency without a parallel path"
   assert.match(predictionIdempotencyMigration, /Idempotency key was already used for a different prediction/);
   assert.match(predictionIdempotencyMigration, /request_id,/);
   assert.match(predictionIdempotencyMigration, /grant execute on function place_prediction_tx\(uuid, uuid, uuid, integer, text\) to service_role/);
-  assert.match(zeroSwitchGuardMigration, /v_position\.id is not null and v_position\.outcome_id <> p_outcome_id and v_impact_max <= 0/);
-  assert.match(zeroSwitchGuardMigration, /Could not patch place_prediction_tx zero-switch impact guard/);
+  assert.match(zeroSwitchGuardMigration, /create or replace function place_prediction_tx\(/);
+  assert.match(zeroSwitchGuardMigration, /create or replace function market_guard_aggregate\(p_market_id uuid, p_humans_only boolean default false\)/);
+  assert.match(zeroSwitchGuardMigration, /p_humans_only or par\.participant_type = 'human'/);
+  assert.match(zeroSwitchGuardMigration, /if v_participant\.participant_type = 'human' then[\s\S]+market_guard_aggregate\(p_market_id, true\)/);
+  assert.match(zeroSwitchGuardMigration, /v_initial_fair_launch := v_position\.id is null and v_fair_launch/);
+  assert.match(zeroSwitchGuardMigration, /v_share_max := v_market\.max_action_stake/);
+  assert.match(zeroSwitchGuardMigration, /This market cannot absorb that switch yet\. This market can absorb up to % Credits from you right now/);
+  assert.doesNotMatch(zeroSwitchGuardMigration, /pg_get_functiondef|Could not patch/);
+  assert.match(zeroSwitchGuardMigration, /grant execute on function market_guard_aggregate\(uuid, boolean\) to service_role/);
   assert.match(zeroSwitchGuardMigration, /grant execute on function place_prediction_tx\(uuid, uuid, uuid, integer, text\) to service_role/);
+  assert.match(dataLayer, /rpc<Row>\("place_prediction_serialized_tx"/);
   assert.match(dataLayer, /p_request_id: input\.requestId\?\.trim\(\)\.slice\(0, 128\) \|\| null/);
   assert.match(predictRoute, /request\.headers\.get\("idempotency-key"\)/);
-  assert.match(predictRoute, /requestId: predictionRequestId\(request, body\)/);
+  assert.match(predictRoute, /const requestId = predictionRequestId\(request, body\)/);
+  assert.match(predictRoute, /Prediction request id required/);
+  assert.match(predictRoute, /requestId\n\s+}\)/);
   assert.match(predictionPanel, /"Idempotency-Key": requestId/);
   assert.doesNotMatch(dataLayer, /duplicatePrediction|parallelPrediction/);
 });
@@ -404,11 +495,53 @@ test("v8 market engine migration adds blind launch signals snapshots and richer 
   assert.match(ledgerParityMigration, /create or replace function credit_purchase_tx\(p_purchase_id uuid, p_status text, p_ip text default null\)/);
   assert.match(ledgerParityMigration, /direction,[\s\S]+balance_after,[\s\S]+idempotency_key,[\s\S]+reason,[\s\S]+purchase_id,[\s\S]+metadata/);
   assert.match(ledgerParityMigration, /'payment_status'/);
+  assert.match(ledgerParityMigration, /v_previous_status text/);
+  assert.match(ledgerParityMigration, /v_purchase\.status is distinct from p_status/);
+  assert.match(ledgerParityMigration, /jsonb_build_object\('previousStatus', v_previous_status, 'status', v_purchase\.status\)/);
   assert.doesNotMatch(ledgerParityMigration, /Could not patch/);
+  assert.match(platformSignalPriorsMigration, /100::numeric as prior_credits/);
+  assert.match(platformSignalPriorsMigration, /credit_total \+ prior_credits/);
+  assert.match(platformSignalPriorsMigration, /1 \/ nullif\(outcome_count, 0\) end as stage_people_component/);
+  assert.match(platformSignalPriorsMigration, /0\.65 \* stage_people_component \+ 0\.35 \* conviction_signal/);
+  assert.match(platformSignalPriorsMigration, /grant execute on function market_signal_snapshot\(uuid\) to service_role/);
   assert.match(dataLayer, /p_blind_launch_prediction_threshold/);
   assert.match(predictRoute, /predictionPreviewData/);
   assert.match(stageView, /Odds over time/);
   assert.match(predictionPanel, /Odds over time/);
+});
+
+test("final live hardening migration adds checkout intents profile lock pool settlement and contract checks", () => {
+  assert.match(finalHardeningMigration, /create table if not exists checkout_intents/);
+  assert.match(finalHardeningMigration, /unique \(event_id, participant_id\)/);
+  assert.match(finalHardeningMigration, /create or replace function record_checkout_intent_tx\(p_participant_id uuid, p_purchase_id uuid default null\)/);
+  assert.match(finalHardeningMigration, /click_count = checkout_intents\.click_count \+ 1/);
+  assert.match(finalHardeningMigration, /create or replace function link_checkout_intent_purchase_tx\(p_participant_id uuid, p_purchase_id uuid\)/);
+  assert.match(finalHardeningMigration, /create or replace function update_participant_profile_tx\(/);
+  assert.match(finalHardeningMigration, /Profile is locked after entering the arena\./);
+  assert.match(finalHardeningMigration, /create or replace function resolve_market_tx\(p_market_id uuid, p_outcome_id uuid, p_note text default '', p_ip text default null\)/);
+  assert.match(finalHardeningMigration, /v_losing_pool/);
+  assert.match(finalHardeningMigration, /'poolShare', v_pool_share/);
+  assert.match(finalHardeningMigration, /total_committed_credits = greatest\(0, w\.total_committed_credits - committed\.raw_credits\)/);
+  assert.match(finalHardeningMigration, /v_market\.status = 'resolved'/);
+  assert.match(finalHardeningMigration, /idempotent', true/);
+  assert.match(finalHardeningMigration, /create or replace function readiness_contract_tx\(\)/);
+  assert.match(finalHardeningMigration, /033_live_event_final_hardening/);
+  assert.match(finalHardeningMigration, /grant execute on function readiness_contract_tx\(\) to service_role/);
+  assert.match(dataLayer, /checkout_intents/);
+  assert.match(dataLayer, /record_checkout_intent_tx/);
+  assert.match(dataLayer, /link_checkout_intent_purchase_tx/);
+  assert.match(dataLayer, /update_participant_profile_tx/);
+  assert.match(profileRoute, /hasCompletedProfile\(session\.participant\)/);
+  assert.match(profileRoute, /Profile is locked after entering the arena/);
+  assert.match(checkoutRoute, /recordCheckoutIntentData\(session\.participant\.id\)/);
+  assert.match(checkoutRoute, /linkCheckoutIntentPurchaseData\(session\.participant\.id, updated\.id\)/);
+});
+
+test("Supabase migrations do not rely on brittle function text patching", () => {
+  for (const file of fs.readdirSync("supabase/migrations").filter((name) => name.endsWith(".sql"))) {
+    const source = fs.readFileSync(`supabase/migrations/${file}`, "utf8");
+    assert.doesNotMatch(source, /pg_get_functiondef|Could not patch/, file);
+  }
 });
 
 test("Supabase admin market create and edit flows are transactional", () => {
@@ -438,7 +571,7 @@ test("Supabase admin market create and edit flows are transactional", () => {
   assert.match(dataLayer, /export async function updateMarketData/);
   assert.match(dataLayer, /rpc<Row>\("update_market_tx"/);
   assert.match(dataLayer, /p_clear_blind_launch_ended_at: input\.clearBlindLaunchEndedAt \|\| false/);
-  assert.match(newMarketPage, /searchParams: Promise<\{ eventSlug\?: string \| string\[\] \}>/);
+  assert.match(newMarketPage, /searchParams: Promise<\{ eventSlug\?: string \| string\[\]; error\?: string \| string\[\] \}>/);
   assert.match(newMarketPage, /store\.events\.some\(\(event\) => event\.slug === requestedSlug\)/);
   assert.match(newMarketPage, /<MarketForm eventSlug=\{eventSlug\} \/>/);
   assert.match(marketForm, /eventSlug = DEFAULT_EVENT_SLUG/);
@@ -507,9 +640,27 @@ test("stage resolution fallback selects resolved markets only", () => {
   assert.match(stageResolutionFallbackMigration, /p_stage_mode <> 'resolution' or status = 'resolved'/);
   assert.match(stageResolutionFallbackMigration, /p_stage_mode = 'resolution' and v_market\.status <> 'resolved'/);
   assert.match(stageResolutionFallbackMigration, /Resolution reveal needs a resolved stage-visible market/);
-  assert.match(stageRoute, /featuredMarketId: mode === "resolution" \? undefined : featuredMarketId \|\| undefined/);
+  assert.match(stageRoute, /featuredMarketId: featuredMarketId \|\| undefined/);
   assert.match(dataLayer, /input\.stageMode === "resolution"/);
   assert.match(dataLayer, /candidate\.status === "resolved"/);
+  assert.match(stageResolutionFeatureGuardMigration, /create or replace function feature_market_tx\(p_market_id uuid/);
+  assert.match(stageResolutionFeatureGuardMigration, /stage_mode = case[\s\S]+stage_mode = 'resolution' and v_market\.status <> 'resolved' then 'live'/);
+  assert.match(dataLayer, /if \(market\.status === "resolved"\) event\.stageMode = "resolution"/);
+  assert.match(dataLayer, /else if \(event\.stageMode === "resolution"\) event\.stageMode = "live"/);
+  assert.match(stageLiveStatusGuardMigration, /v_needs_unresolved_market boolean := p_stage_mode in \('live', 'role_battle', 'humans_vs_agents'\)/);
+  assert.match(stageLiveStatusGuardMigration, /v_needs_unresolved_market and v_market\.status = 'resolved'/);
+  assert.match(stageLiveStatusGuardMigration, /This stage mode needs an open or locked stage-visible market/);
+  assert.match(stageLiveStatusGuardMigration, /and \(not v_needs_unresolved_market or status <> 'resolved'\)/);
+  assert.match(stageSafeFallbackMigration, /create or replace function stage_market_is_compatible/);
+  assert.match(stageSafeFallbackMigration, /when p_stage_mode = 'resolution' then p_market_status = 'resolved'/);
+  assert.match(stageSafeFallbackMigration, /when p_stage_mode in \('live', 'role_battle', 'humans_vs_agents'\) then p_market_status <> 'resolved'/);
+  assert.match(stageSafeFallbackMigration, /create trigger events_stage_feature_normalize/);
+  assert.match(stageSafeFallbackMigration, /when v_market\.status = 'resolved' then 'resolution'/);
+  assert.match(stageSafeFallbackMigration, /if not stage_market_is_compatible\(p_stage_mode, v_market\.status\) then[\s\S]+v_market := null/);
+  assert.match(dataLayer, /const marketDisplayModes: StageMode\[\] = \["live", "role_battle", "humans_vs_agents"\]/);
+  assert.match(dataLayer, /const compatibleExplicitMarket/);
+  assert.match(adminStagePage, /Live\/role modes use open or locked markets\. Resolution mode uses resolved markets\./);
+  assert.match(eventAdminPage, /Live\/role modes use open or locked markets\. Resolution mode uses resolved markets\./);
 });
 
 test("Supabase signal snapshots keep agents out of default room signal", () => {
@@ -530,6 +681,10 @@ test("admin API route handlers verify the admin session cookie directly", () => 
   assert.match(adminLoginRoute, /attemptCookieKey/);
   assert.match(adminLoginRoute, /platformIpKey/);
   assert.match(adminLoginRoute, /throttles\.some/);
+  assert.match(adminLoginRoute, /function loginErrorResponse/);
+  assert.match(adminLoginRoute, /NextResponse\.redirect\(url, \{ status: 303 \}\)/);
+  assert.match(adminLoginPage, /firstSearchParam\(params\.error\)/);
+  assert.match(adminLoginPage, /\{error\}/);
 });
 
 test("admin market edits guard against stale stage or lifecycle forms", () => {
@@ -542,22 +697,46 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
   assert.match(marketUpdateRoute, /fairLaunchSignalCreditsThreshold/);
   assert.match(marketCreateRoute, /createMarketData/);
   assert.match(marketUpdateRoute, /updateMarketData/);
+  assert.match(marketCreateRoute, /adminActionError\(request, returnTo/);
+  assert.match(marketUpdateRoute, /adminActionError\(request, returnTo/);
+  assert.match(newMarketPage, /Market draft failed/);
   assert.match(dataLayer, /freshMarket\.updatedAt !== expectedUpdatedAt/);
   assert.match(marketUpdateRoute, /Market changed since this form loaded/);
   assert.match(marketPage, /disabled=\{market\.status !== "draft"\}/);
   assert.match(marketPage, /market\.status === "locked"/);
   assert.match(marketPage, /action="feature"[\s\S]+disabled=\{market\.status === "draft" \|\| market\.status === "voided"\}/);
   assert.match(marketPage, /Lock this market before resolving it/);
+  assert.match(marketPage, /Market action failed/);
+  assert.match(marketForm, /name="confirmResolution"/);
+  assert.match(marketForm, /I confirm this is the official result/);
+  assert.match(fs.readFileSync("app/api/admin/markets/[id]/resolve/route.ts", "utf8"), /form\.get\("confirmResolution"\) !== "on"/);
+  for (const file of [
+    "app/api/admin/markets/[id]/feature/route.ts",
+    "app/api/admin/markets/[id]/lock/route.ts",
+    "app/api/admin/markets/[id]/open/route.ts",
+    "app/api/admin/markets/[id]/resolve/route.ts",
+    "app/api/admin/markets/[id]/void/route.ts"
+  ]) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.match(source, /adminActionError/);
+    assert.doesNotMatch(source, /return badRequest\(error/);
+  }
+  assert.match(httpHelper, /export function adminActionError/);
+  assert.match(httpHelper, /url\.searchParams\.set\("error"/);
   assert.match(marketPage, /const virtualProvisionCredits = market\.status === "voided"/);
   assert.match(marketPage, /store\.positions/);
   assert.match(marketUpdateRoute, /showOnStage: existing\.status !== "voided" && form\.get\("showOnStage"\) === "on"/);
   assert.match(dataLayer, /Only non-voided public markets can be featured on stage/);
   assert.doesNotMatch(marketPage, /const virtualProvisionCredits = store\.predictionActions/);
   assert.match(stageView, /people in/);
+  assert.match(stageView, /function CompactStageQr/);
+  assert.match(stageView, /joinUrl=\{joinUrl\}/);
+  assert.match(stageView, /Stage data is reconnecting\. Showing the last confirmed state\./);
+  assert.match(stageView, /setRefreshFailed\(true\)/);
   assert.match(stageView, /item\.status !== "voided" && item\.showOnStage/);
   assert.match(stageView, /Predictions and MegaBuck top-ups are temporarily paused by the organizer/);
-  assert.match(stageView, /if \(!publicStateResponse\.ok \|\| !leaderboardResponse\.ok\) return/);
-  assert.match(stageView, /if \(!publicState\?\.event \|\| !Array\.isArray\(publicState\.markets\) \|\| !Array\.isArray\(leaderboard\?\.leaderboard\)\) return/);
+  assert.match(stageView, /if \(!publicStateResponse\.ok \|\| !leaderboardResponse\.ok\) \{[\s\S]+setRefreshFailed\(true\)/);
+  assert.match(stageView, /if \(!publicState\?\.event \|\| !Array\.isArray\(publicState\.markets\) \|\| !Array\.isArray\(leaderboard\?\.leaderboard\)\) \{[\s\S]+setRefreshFailed\(true\)/);
   assert.match(stageView, /showAgentLayer \? `Humans \$\{pct\(outcome\.humanSignal\)\}` : `Room \$\{pct\(outcome\.stageSignal\)\}`/);
   assert.match(stageView, /Compare Humans\/Agents/);
   assert.match(stageView, /outcome\.combinedSignal/);
@@ -565,8 +744,13 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
   assert.match(stageView, /stage-pulse-even/);
   assert.match(eventAdminPage, /status !== "voided"/);
   assert.match(eventAdminPage, /No stage-visible markets/);
+  assert.match(eventAdminPage, /Control update failed/);
   assert.match(eventAdminPage, /\/admin\/markets\/new\?eventSlug=\$\{encodeURIComponent\(slug\)\}/);
-  assert.match(eventAdminPage, /\{market\.title\} \(\{market\.status\}\)/);
+  assert.match(eventAdminPage, /\{market\.title\} \(\{market\.status\}\{market\.status === "resolved" \? ", resolution only" : ""\}\)/);
+  assert.match(eventAdminPage, /activeStageMarkets = stageMarkets\.filter\(\(market\) => market\.status !== "resolved"\)/);
+  assert.match(adminStagePage, /activeStageMarkets = markets\.filter\(\(market\) => market\.status !== "resolved"\)/);
+  assert.match(adminStagePage, /Stage update failed/);
+  assert.match(stageRoute, /adminActionError\(request, returnTo/);
   assert.match(predictionPanel, /const isZeroMegaBuckSwitch = isSwitch && amountValue === 0/);
   assert.match(predictionPanel, /postCooldownAllowedAdd/);
   assert.match(predictionPanel, /Whale Guard cap after cooldown/);
@@ -574,6 +758,11 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
   assert.match(predictionPanel, /const previewBlocksSubmit = Boolean\(preview\?\.blocked\)/);
   assert.match(predictionPanel, /Max allowed now/);
   assert.match(predictionPanel, /disabled=\{!selectedAllowed \|\| selectedAllowed\.allowedAdd <= 0\}/);
+  assert.match(predictionPanel, /const marketClosed = market\.status !== "open"/);
+  assert.match(predictionPanel, /<ClosedMarketSummary/);
+  assert.match(predictionPanel, /Winning outcome/);
+  assert.match(predictionPanel, /Predictions are locked\. Watch the stage for the reveal\./);
+  assert.match(predictionPanel, /Share your receipt/);
   assert.match(featureStageGuardMigration, /v_market\.status in \('draft', 'voided'\)/);
 });
 
@@ -586,8 +775,14 @@ test("public pages expose role boards and market hero imagery", () => {
   assert.match(stageView, /StageBoard title="Investors"/);
   assert.match(eventPage, /PublicEventLive/);
   assert.match(eventPage, /Predictions are paused/);
-  assert.match(eventPage, /nextOpenMarket \? `\/m\/\$\{nextOpenMarket\.id\}` : `\/e\/\$\{slug\}`/);
-  assert.match(publicEventLive, /state\.markets\.map/);
+  assert.match(eventPage, /participantOrderedMarkets = \[\.\.\.state\.markets\]\.sort\(\(a, b\) => compareMarketForParticipant\(a, b, state\.event\.featuredMarketId\)\)/);
+  assert.match(eventPage, /openFeaturedMarket \|\| nextOpenMarket \|\| featuredVisibleMarket/);
+  assert.match(eventPage, /showMobileTopUp/);
+  assert.match(publicEventLive, /featuredMarketId = state\.event\.featuredMarketId/);
+  assert.match(publicEventLive, /compareMarketForParticipant\(a, b, featuredMarketId\)/);
+  assert.match(publicEventLive, /statusDelta !== 0/);
+  assert.match(publicEventLive, /markets\.map/);
+  assert.match(publicEventLive, /mobilePrimaryMarkets\.map/);
   assert.match(publicEventLive, /Markets are loading/);
   assert.match(publicEventLive, /Predictions paused/);
   assert.match(publicMarketPage, /state\.imageUrl/);
@@ -603,15 +798,25 @@ test("admin control surfaces avoid GET writes and expose proof/control affordanc
   assert.match(agentsPage, /Initialize house agents/);
   assert.match(agentsPage, /McpTokenForm/);
   assert.match(mcpTokenForm, /\/api\/admin\/mcp-tokens/);
+  assert.match(mcpTokenForm, /Choose participant/);
+  assert.match(mcpTokenForm, /disabled=\{busy \|\| !participantId\}/);
   assert.match(mcpTokenRoute, /createMcpWriteTokenData/);
+  assert.match(dataLayer, /Choose a participant for this MCP write token/);
+  assert.match(dataLayer, /Math\.min\(720, Math\.max\(1, Math\.floor\(input\.expiresInHours \|\| 72\)\)\)/);
   assert.doesNotMatch(mcpTokenForm, /localStorage|sessionStorage/);
   assert.doesNotMatch(mcpTokenRoute, /searchParams\.set\("mcpToken"/);
   assert.match(ensureAgentsRoute, /ensureHouseAgentsData/);
+  assert.match(agentEnsureRoute, /adminActionError\(request, "\/admin\/agents"/);
+  assert.match(agentRunRoute, /adminActionError\(request, "\/admin\/agents"/);
+  assert.match(agentsPage, /Agent action failed/);
+  assert.match(agentsPage, /MCP token created/);
+  assert.match(participantsRoute, /adminActionError\(request, returnTo/);
+  assert.match(participantsPage, /Participant update failed/);
   assert.match(eventAdminPage, /Control room/);
   assert.match(eventAdminPage, /Stage quick controls/);
   assert.match(eventAdminPage, /AdminLiveRefresh/);
   assert.match(eventAdminPage, /name="returnTo" value=\{`\/admin\/events\/\$\{slug\}`\}/);
-  assert.match(adminStagePage, /name="returnTo" value="\/admin\/stage"/);
+  assert.match(adminStagePage, /name="returnTo" value=\{`\/admin\/stage\?eventSlug=\$\{encodeURIComponent\(event\.slug\)\}`\}/);
   assert.match(eventAdminPage, /\/admin\/markets\/new\?eventSlug=\$\{encodeURIComponent\(slug\)\}/);
   assert.match(stageRoute, /safeAdminReturnPath/);
   assert.match(stageRoute, /return Response\.redirect\(new URL\(returnTo, request\.url\), 303\)/);
@@ -664,6 +869,8 @@ test("P2 report and media surfaces are wired without external runtime dependenci
   assert.match(receiptPage, /I called it/);
   assert.match(receiptPage, /You saw it first/);
   assert.match(receiptPage, /\/receipt\/\$\{id\}\/promo/);
+  assert.match(receiptPage, /sticky bottom-2 z-20/);
+  assert.match(receiptPage, /Back to vota\.wtf/);
   assert.match(receiptPage, /readReceiptStoreData\(id\)/);
   assert.match(receiptPage, /store\.events\.find/);
   assert.match(receiptPage, /href=\{`\/e\/\$\{eventSlug\}`\}/);
@@ -674,7 +881,17 @@ test("P2 report and media surfaces are wired without external runtime dependenci
   assert.match(receiptPromoPage, /href=\{`\/e\/\$\{eventSlug\}`\}/);
   assert.doesNotMatch(receiptPromoPage, /readDataStore/);
   assert.match(receiptPromoPage, /promo-frame/);
+  assert.match(receiptPromoPage, /sm:min-h-\[560px\]/);
+  assert.match(receiptPromoPage, /Back to vota\.wtf/);
   assert.match(promoHelper, /pixVersePrompt/);
+});
+
+test("receipt pages expose native share and clipboard fallback", () => {
+  assert.match(receiptPage, /ShareReceiptButton/);
+  assert.match(receiptPromoPage, /ShareReceiptButton/);
+  assert.match(shareReceiptButton, /navigator\.share/);
+  assert.match(shareReceiptButton, /navigator\.clipboard\.writeText/);
+  assert.match(shareReceiptButton, /Share receipt/);
 });
 
 test("proof and optional integration environment hooks are documented", () => {

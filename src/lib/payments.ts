@@ -18,7 +18,8 @@ async function fetchMolliePayment(paymentId: string) {
   const key = process.env.MOLLIE_API_KEY || "";
   if (!key.startsWith("test_")) throw new Error("Mollie must stay in test mode.");
   const response = await fetch(`https://api.mollie.com/v2/payments/${paymentId}`, {
-    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" }
+    headers: { Authorization: `Bearer ${key}`, Accept: "application/json" },
+    signal: AbortSignal.timeout(5000)
   });
   if (!response.ok) throw new Error("Could not verify Mollie status.");
   return response.json();

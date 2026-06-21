@@ -12,6 +12,16 @@ export async function GET(request: NextRequest) {
   const event = store.events.find((item) => item.slug === eventSlug);
   const participantIds = new Set(store.participants.filter((participant) => participant.eventId === event?.id).map((participant) => participant.id));
   const purchases = store.purchases.filter((purchase) => participantIds.has(purchase.participantId));
+  const checkoutIntents = store.checkoutIntents
+    .filter((intent) => participantIds.has(intent.participantId))
+    .map((intent) => {
+      const participant = store.participants.find((item) => item.id === intent.participantId);
+      return {
+        ...intent,
+        participantName: participant?.nickname || "",
+        participantRole: participant?.role || ""
+      };
+    });
   if (request.nextUrl.searchParams.get("format") === "csv") {
     return csvResponse(
       "vota-test-purchases.csv",
@@ -29,5 +39,5 @@ export async function GET(request: NextRequest) {
       }))
     );
   }
-  return json({ purchases, metrics: paymentMetrics(store, participantIds) });
+  return json({ purchases, checkoutIntents, metrics: paymentMetrics(store, participantIds) });
 }

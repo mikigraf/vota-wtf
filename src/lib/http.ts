@@ -12,6 +12,14 @@ export function badRequest(message: string, status = 400) {
   return json({ error: message }, { status });
 }
 
+export function adminActionError(request: Request, returnPath: string, message: string) {
+  const accept = request.headers.get("accept") || "";
+  if (accept.includes("application/json") && !accept.includes("text/html")) return badRequest(message);
+  const url = new URL(returnPath || "/admin", request.url);
+  url.searchParams.set("error", message.slice(0, 280));
+  return Response.redirect(url, 303);
+}
+
 export async function readJsonObject(request: Request) {
   const parsed = await request.json().catch(() => ({}));
   return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};

@@ -14,12 +14,14 @@ import {
   getEventOrThrow,
   getSessionParticipantByGuard,
   getSessionParticipant,
+  linkCheckoutIntentToPurchase,
   leaderboardGroups,
   mutateStore,
   placePrediction,
   predictionPreview,
   publicState,
   readStore,
+  recordCheckoutIntent,
   recomputeMarketAggregate,
   resolveMarket,
   runHouseAgent,
@@ -33,6 +35,7 @@ import type {
   AdminAuditLog,
   AgentProfile,
   AgentRun,
+  CheckoutIntent,
   EventRecord,
   LedgerEntry,
   LeaderboardGroups,
@@ -98,6 +101,7 @@ const TABLES = [
   "ledger_entries",
   "market_aggregates",
   "purchases",
+  "checkout_intents",
   "admin_audit_logs",
   "agent_profiles",
   "agent_runs",
@@ -117,6 +121,7 @@ function emptyDataStore(): Store {
     ledgerEntries: [],
     marketAggregates: [],
     purchases: [],
+    checkoutIntents: [],
     adminAuditLogs: [],
     agentProfiles: [],
     agentRuns: [],
@@ -707,6 +712,34 @@ function purchaseToRow(purchase: Purchase): Row {
   };
 }
 
+function checkoutIntentFromRow(row: Row): CheckoutIntent {
+  return {
+    id: row.id,
+    eventId: row.event_id,
+    participantId: row.participant_id,
+    firstClickedAt: row.first_clicked_at,
+    lastClickedAt: row.last_clicked_at,
+    clickCount: row.click_count,
+    amountEur: Number(row.amount_eur),
+    credits: row.credits,
+    purchaseId: row.purchase_id || undefined
+  };
+}
+
+function checkoutIntentToRow(intent: CheckoutIntent): Row {
+  return {
+    id: intent.id,
+    event_id: intent.eventId,
+    participant_id: intent.participantId,
+    first_clicked_at: intent.firstClickedAt,
+    last_clicked_at: intent.lastClickedAt,
+    click_count: intent.clickCount,
+    amount_eur: intent.amountEur,
+    credits: intent.credits,
+    purchase_id: intent.purchaseId || null
+  };
+}
+
 function auditLogFromRow(row: Row): AdminAuditLog {
   return {
     id: row.id,
@@ -836,6 +869,7 @@ async function readSupabaseStore(): Promise<Store> {
     ledgerEntries,
     marketAggregates,
     purchases,
+    checkoutIntents,
     adminAuditLogs,
     agentProfiles,
     agentRuns,
@@ -853,6 +887,7 @@ async function readSupabaseStore(): Promise<Store> {
     ledgerEntries: ledgerEntries.map(ledgerEntryFromRow),
     marketAggregates: marketAggregates.map(aggregateFromRow),
     purchases: purchases.map(purchaseFromRow),
+    checkoutIntents: checkoutIntents.map(checkoutIntentFromRow),
     adminAuditLogs: adminAuditLogs.map(auditLogFromRow),
     agentProfiles: agentProfiles.map(agentProfileFromRow),
     agentRuns: agentRuns.map(agentRunFromRow),
@@ -866,7 +901,7 @@ async function readSupabasePublicState(eventSlug: string): Promise<PublicEventSt
   const event = eventRows[0] ? eventFromRow(eventRows[0]) : undefined;
   if (!event) return publicState(emptyDataStore(), eventSlug);
 
-  const marketRows = await selectRows("markets", `select=*&event_id=eq.${encodeURIComponent(event.id)}&status=neq.draft`);
+  const marketRows = await selectRows("markets", `select=*&event_id=eq.${encodeURIComponent(event.id)}&status=not.in.(draft,voided)`);
   const markets = marketRows.map(marketFromRow);
   const marketIds = markets.map((market) => market.id);
   const [outcomeRows, aggregateRows, participantRows, positionRows, actionRows] =
@@ -955,7 +990,7 @@ async function readSupabaseLeaderboardGroups(eventSlug: string): Promise<Leaderb
 function scopedPublicEventStore(source: Store, eventSlug: string, sessionId?: string): Store {
   const event = source.events.find((item) => item.slug === eventSlug);
   if (!event) return emptyDataStore();
-  const markets = source.markets.filter((market) => market.eventId === event.id && market.status !== "draft");
+  const markets = source.markets.filter((market) => market.eventId === event.id && market.status !== "draft" && market.status !== "voided");
   const marketIds = new Set(markets.map((market) => market.id));
   const sessions = sessionId
     ? source.participantSessions.filter((session) => session.id === sessionId && session.eventId === event.id)
@@ -978,7 +1013,7 @@ function scopedPublicEventStore(source: Store, eventSlug: string, sessionId?: st
 }
 
 function scopedPublicMarketStore(source: Store, marketId: string, sessionId?: string): Store {
-  const market = source.markets.find((item) => item.id === marketId && item.status !== "draft");
+  const market = source.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
   const event = source.events.find((item) => item.id === market?.eventId);
   if (!market || !event) return emptyDataStore();
   const sessions = sessionId
@@ -1028,7 +1063,7 @@ async function readSupabasePublicEventStore(eventSlug: string, sessionId?: strin
   if (!event) return emptyDataStore();
 
   const [marketRows, sessionRows] = await Promise.all([
-    selectRows("markets", `select=*&event_id=eq.${encodeURIComponent(event.id)}&status=neq.draft`),
+    selectRows("markets", `select=*&event_id=eq.${encodeURIComponent(event.id)}&status=not.in.(draft,voided)`),
     sessionId
       ? selectRows(
           "participant_sessions",
@@ -1070,7 +1105,7 @@ async function readSupabasePublicEventStore(eventSlug: string, sessionId?: strin
 
 async function readSupabasePublicMarketStore(marketId: string, sessionId?: string): Promise<Store> {
   await ensureSupabaseSeeded();
-  const marketRows = await selectRows("markets", `select=*&id=eq.${encodeURIComponent(marketId)}&status=neq.draft`);
+  const marketRows = await selectRows("markets", `select=*&id=eq.${encodeURIComponent(marketId)}&status=not.in.(draft,voided)`);
   const market = marketRows[0] ? marketFromRow(marketRows[0]) : undefined;
   if (!market) return emptyDataStore();
   const eventRows = await selectRows("events", `select=*&id=eq.${encodeURIComponent(market.eventId)}`);
@@ -1258,13 +1293,23 @@ export async function findEventBySlugData(eventSlug: string) {
 export async function findNextOpenMarketData(eventId: string) {
   if (!eventId) return undefined;
   if (!useSupabaseStore()) {
-    return (await readStore()).markets.find((market) => market.eventId === eventId && market.status === "open");
+    const store = await readStore();
+    const event = store.events.find((item) => item.id === eventId);
+    const openMarkets = store.markets
+      .filter((market) => market.eventId === eventId && market.status === "open")
+      .sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.title.localeCompare(b.title));
+    return openMarkets.find((market) => market.id === event?.featuredMarketId) || openMarkets[0];
   }
-  const rows = await selectRows(
+  const [eventRows, rows] = await Promise.all([
+    selectRows("events", `select=*&id=eq.${encodeURIComponent(eventId)}`),
+    selectRows(
     "markets",
     `select=*&event_id=eq.${encodeURIComponent(eventId)}&status=eq.open&order=created_at.asc`
-  );
-  return rows[0] ? marketFromRow(rows[0]) : undefined;
+    )
+  ]);
+  const event = eventRows[0] ? eventFromRow(eventRows[0]) : undefined;
+  const markets = rows.map(marketFromRow);
+  return markets.find((market) => market.id === event?.featuredMarketId) || markets[0];
 }
 
 export async function findReusablePendingPurchaseData(participantId: string) {
@@ -1313,6 +1358,11 @@ async function writeSupabaseSnapshot(before: Store, after: Store) {
   await upsertRows("wallets", changedRows(before.wallets, after.wallets, (wallet) => wallet.participantId, walletToRow), "participant_id");
   await upsertRows("participant_sessions", changedRows(before.participantSessions, after.participantSessions, (session) => session.id, sessionToRow), "id");
   await upsertRows("purchases", changedRows(before.purchases, after.purchases, (purchase) => purchase.id, purchaseToRow), "id");
+  await upsertRows(
+    "checkout_intents",
+    changedRows(before.checkoutIntents, after.checkoutIntents, (intent) => intent.id, checkoutIntentToRow),
+    "id"
+  );
   await upsertRows("positions", changedPositionRows, "id");
   await upsertRows(
     "prediction_actions",
@@ -1344,6 +1394,37 @@ async function writeSupabaseSnapshot(before: Store, after: Store) {
 export async function readDataStore(): Promise<Store> {
   if (!useSupabaseStore()) return readStore();
   return readSupabaseStore();
+}
+
+export async function readinessContractData() {
+  if (!useSupabaseStore()) {
+    return {
+      contractVersion: "local",
+      ok: true,
+      checkoutIntentsTable: true,
+      checkoutIntentRecordRpc: true,
+      checkoutIntentLinkRpc: true,
+      pendingPurchaseRpc: true,
+      profileLockRpc: true,
+      poolSettlementRpc: true,
+      voidMarketRpc: true,
+      transitionMarketRpc: true,
+      marketSignalsRpc: true,
+      predictionLockHelperRpc: true,
+      predictionSerializedRpc: true,
+      agentPredictionSerializedRpc: true,
+      predictionIdempotencyColumn: true,
+      predictionRequestUniqueIndex: true,
+      resolutionCreditUniqueIndex: true,
+      voidRefundUniqueIndex: true,
+      pendingPurchaseUniqueIndex: true,
+      positionsSameEventTrigger: true,
+      predictionActionsSameEventTrigger: true,
+      stageFeatureNormalizeTrigger: true,
+      ledgerSettlementColumns: true
+    };
+  }
+  return rpc<Row>("readiness_contract_tx", {});
 }
 
 export async function readPublicStateData(eventSlug = DEFAULT_EVENT_SLUG): Promise<PublicEventState> {
@@ -1406,23 +1487,13 @@ export async function updateParticipantProfileData(
       })
     );
   }
-  const currentRows = await selectRows("participants", `select=*&id=eq.${encodeURIComponent(participantId)}`);
-  const current = currentRows[0] ? participantFromRow(currentRows[0]) : undefined;
-  if (!current) throw new Error("Participant not found");
-  const patch: Row = {
-    nickname: normalizeNickname(input.nickname),
-    role: normalizeRole(input.role)
-  };
-  if (input.avatarUrl) patch.avatar_url = input.avatarUrl;
-  const updatedRows = await patchRowsReturning("participants", `id=eq.${encodeURIComponent(participantId)}`, patch);
-  const updated = updatedRows[0] ? participantFromRow(updatedRows[0]) : undefined;
-  if (!updated) throw new Error("Participant not found");
-  if (current.role !== updated.role) {
-    const positionRows = await selectRows("positions", `select=market_id&participant_id=eq.${encodeURIComponent(participantId)}`);
-    const marketIds = new Set(positionRows.map((row) => String(row.market_id)).filter(Boolean));
-    for (const marketId of marketIds) await rpc("recompute_market_aggregate", { p_market_id: marketId });
-  }
-  return updated;
+  const updated = await rpc<Row>("update_participant_profile_tx", {
+    p_participant_id: participantId,
+    p_nickname: normalizeNickname(input.nickname),
+    p_role: normalizeRole(input.role),
+    p_avatar_url: input.avatarUrl || null
+  });
+  return participantFromRow(updated);
 }
 
 export async function createMarketData(input: MarketWriteInput) {
@@ -1616,7 +1687,7 @@ export async function placePredictionData(
       };
     });
   }
-  const result = await rpc<Row>("place_prediction_tx", {
+  const result = await rpc<Row>("place_prediction_serialized_tx", {
     p_session_id: sessionId,
     p_market_id: input.marketId,
     p_outcome_id: input.outcomeId,
@@ -1675,7 +1746,7 @@ export async function runHouseAgentData(input: { eventSlug: string; agentId?: st
 
   try {
     if (amount <= 0) throw new Error(allowed.reason);
-    await rpc<Row>("place_agent_prediction_tx", {
+    await rpc<Row>("place_agent_prediction_serialized_tx", {
       p_participant_id: agent.participantId,
       p_market_id: market.id,
       p_outcome_id: outcome.id,
@@ -1745,6 +1816,8 @@ export async function featureMarketData(marketId: string, auditIp?: string) {
       market.showOnStage = true;
       market.updatedAt = nowIso();
       event.featuredMarketId = market.id;
+      if (market.status === "resolved") event.stageMode = "resolution";
+      else if (event.stageMode === "resolution") event.stageMode = "live";
       createAuditLog(store, {
         action: "feature_market",
         entityType: "market",
@@ -1770,23 +1843,39 @@ export async function updateStageControlsData(input: {
   if (!useSupabaseStore()) {
     return mutateStore((store) => {
       const item = getEventOrThrow(store, input.eventSlug);
+      const marketDisplayModes: StageMode[] = ["live", "role_battle", "humans_vs_agents"];
+      const needsActiveMarket = marketDisplayModes.includes(input.stageMode);
       const stageMarkets = store.markets.filter((candidate) =>
         candidate.eventId === item.id && candidate.status !== "draft" && candidate.status !== "voided" && candidate.showOnStage
       );
       const explicitMarket = input.featuredMarketId
         ? stageMarkets.find((candidate) => candidate.id === input.featuredMarketId)
         : undefined;
-      const selectedMarket =
-        input.stageMode === "resolution"
-          ? (explicitMarket?.status === "resolved" ? explicitMarket : undefined) ||
-            stageMarkets.find((candidate) => candidate.id === item.featuredMarketId && candidate.status === "resolved") ||
-            stageMarkets.find((candidate) => candidate.status === "resolved")
-          : explicitMarket || stageMarkets.find((candidate) => candidate.id === item.featuredMarketId) || stageMarkets[0];
       if (input.featuredMarketId && !explicitMarket) {
         throw new Error("Featured market is not available on stage.");
       }
-      if (["live", "role_battle", "humans_vs_agents"].includes(input.stageMode) && !selectedMarket) {
-        throw new Error("This stage mode needs a stage-visible market.");
+      const compatibleExplicitMarket =
+        explicitMarket && (
+          input.stageMode === "resolution"
+            ? explicitMarket.status === "resolved"
+            : needsActiveMarket
+              ? explicitMarket.status !== "resolved"
+              : true
+        )
+          ? explicitMarket
+          : undefined;
+      const selectedMarket =
+        input.stageMode === "resolution"
+          ? compatibleExplicitMarket ||
+            stageMarkets.find((candidate) => candidate.id === item.featuredMarketId && candidate.status === "resolved") ||
+            stageMarkets.find((candidate) => candidate.status === "resolved")
+          : needsActiveMarket
+            ? compatibleExplicitMarket ||
+              stageMarkets.find((candidate) => candidate.id === item.featuredMarketId && candidate.status !== "resolved") ||
+              stageMarkets.find((candidate) => candidate.status !== "resolved")
+            : explicitMarket || stageMarkets.find((candidate) => candidate.id === item.featuredMarketId) || stageMarkets[0];
+      if (needsActiveMarket && !selectedMarket) {
+        throw new Error("This stage mode needs an open or locked stage-visible market.");
       }
       if (input.stageMode === "resolution") {
         if (!selectedMarket) throw new Error("Resolution reveal needs a resolved stage-visible market.");
@@ -1836,6 +1925,40 @@ export async function createPurchaseData(participantId: string) {
   };
   await upsertRows("purchases", [purchaseToRow(purchase)], "id");
   return purchase;
+}
+
+export async function createOrReusePendingPurchaseData(participantId: string) {
+  if (!useSupabaseStore()) {
+    return mutateDataStore((store) => {
+      const existing = [...store.purchases]
+        .reverse()
+        .find((purchase) => purchase.participantId === participantId && purchase.status === "pending");
+      return existing || createPurchase(store, participantId);
+    });
+  }
+  const result = await rpc<Row>("create_or_reuse_pending_purchase_tx", {
+    p_participant_id: participantId,
+    p_purchase_id: makeId("pur")
+  });
+  return purchaseFromRow(result);
+}
+
+export async function recordCheckoutIntentData(participantId: string, purchaseId?: string) {
+  if (!useSupabaseStore()) return mutateDataStore((store) => recordCheckoutIntent(store, participantId, purchaseId));
+  const result = await rpc<Row>("record_checkout_intent_tx", {
+    p_participant_id: participantId,
+    p_purchase_id: purchaseId || null
+  });
+  return checkoutIntentFromRow(result);
+}
+
+export async function linkCheckoutIntentPurchaseData(participantId: string, purchaseId: string) {
+  if (!useSupabaseStore()) return mutateDataStore((store) => linkCheckoutIntentToPurchase(store, participantId, purchaseId));
+  const result = await rpc<Row>("link_checkout_intent_purchase_tx", {
+    p_participant_id: participantId,
+    p_purchase_id: purchaseId
+  });
+  return result ? checkoutIntentFromRow(result) : undefined;
 }
 
 export async function attachPaymentToPurchaseData(
@@ -1941,9 +2064,11 @@ export async function createMcpWriteTokenData(input: {
   expiresInHours?: number;
   auditIp?: string;
 }) {
+  if (!input.participantId) throw new Error("Choose a participant for this MCP write token.");
   const token = `mcp_${randomBytes(24).toString("base64url")}`;
   const now = nowIso();
-  const expiresAt = new Date(Date.now() + Math.max(1, input.expiresInHours || 72) * 60 * 60 * 1000).toISOString();
+  const expiresInHours = Math.min(720, Math.max(1, Math.floor(input.expiresInHours || 72)));
+  const expiresAt = new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString();
   const record: McpToken = {
     id: makeId("mcp"),
     participantId: input.participantId || undefined,

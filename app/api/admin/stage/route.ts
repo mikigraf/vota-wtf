@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { updateStageControlsData } from "@/lib/data";
-import { badRequest, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
+import { adminActionError, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
 import type { StageMode } from "@/lib/types";
 
 const modes: StageMode[] = ["join", "live", "role_battle", "humans_vs_agents", "leaderboard", "resolution"];
@@ -26,12 +26,12 @@ export async function POST(request: NextRequest) {
     const event = await updateStageControlsData({
       eventSlug,
       stageMode: mode,
-      featuredMarketId: mode === "resolution" ? undefined : featuredMarketId || undefined,
+      featuredMarketId: featuredMarketId || undefined,
       emergencyPaused
     }, clientIpFromRequest(request));
     if (request.headers.get("accept")?.includes("application/json")) return json({ event });
     return Response.redirect(new URL(returnTo, request.url), 303);
   } catch (error) {
-    return badRequest(error instanceof Error ? error.message : "Could not update stage.");
+    return adminActionError(request, returnTo, error instanceof Error ? error.message : "Could not update stage.");
   }
 }

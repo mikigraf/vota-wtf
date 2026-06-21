@@ -21,6 +21,9 @@ test("local Supabase runbook and scripts are wired", () => {
   const config = fs.readFileSync("supabase/config.toml", "utf8");
   const seed = fs.readFileSync("supabase/seed.sql", "utf8");
   const envScript = fs.readFileSync("scripts/write-local-supabase-env.mjs", "utf8");
+  const e2eRunner = fs.readFileSync("scripts/run-local-playwright.mjs", "utf8");
+  const e2eSeed = fs.readFileSync("scripts/seed-e2e.ts", "utf8");
+  const playwrightConfig = fs.readFileSync("playwright.config.ts", "utf8");
   const readme = fs.readFileSync("README.md", "utf8");
   const workflow = fs.readFileSync(".github/workflows/verify.yml", "utf8");
   const vercel = JSON.parse(fs.readFileSync("vercel.json", "utf8")) as Record<string, string>;
@@ -31,6 +34,9 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.equal(pkg.scripts["supabase:reset"], "supabase db reset");
   assert.equal(pkg.scripts["supabase:push"], "supabase db push");
   assert.equal(pkg.scripts["env:local:supabase"], "node scripts/write-local-supabase-env.mjs");
+  assert.equal(pkg.scripts["load:500"], "node -r ./tests/register-ts.cjs scripts/load-500.ts");
+  assert.equal(pkg.scripts["e2e"], "playwright test");
+  assert.equal(pkg.scripts["e2e:local"], "node scripts/run-local-playwright.mjs");
   assert.match(pkg.scripts["dev:local:supabase"], /env:local:supabase/);
   assert.match(pkg.scripts["verify:local:supabase"], /VOTA_DATA_BACKEND=supabase npm run verify/);
   assert.equal(vercel.framework, "nextjs");
@@ -42,15 +48,25 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(seed, /Seed data is inserted by migrations/);
   assert.match(envScript, /supabase", \["status", "-o", "env"\]/);
   assert.match(envScript, /MOLLIE_API_KEY=/);
+  assert.match(e2eRunner, /supabase", \["start"\]/);
+  assert.match(e2eRunner, /supabase", \["db", "reset"\]/);
+  assert.match(e2eRunner, /scripts\/seed-e2e\.ts/);
+  assert.match(e2eRunner, /PLAYWRIGHT_BASE_URL: "http:\/\/127\.0\.0\.1:3100"/);
+  assert.match(e2eSeed, /slug: "megathon"/);
+  assert.match(e2eSeed, /name: "Megathon"/);
+  assert.match(e2eSeed, /slug: "megatalkTesting"/);
+  assert.match(e2eSeed, /name: "megatalkTesting"/);
+  assert.match(playwrightConfig, /reuseExistingServer: process\.env\.PLAYWRIGHT_REUSE_SERVER === "1"/);
   assert.match(readme, /npm run supabase:start/);
   assert.match(readme, /supabase link --project-ref <your-supabase-project-ref>/);
   assert.match(readme, /npm run supabase:push/);
   assert.match(readme, /Keep the framework preset as `Next\.js`/);
   assert.match(readme, /npm run dev:local:supabase/);
+  assert.match(readme, /npm run e2e:local/);
   assert.match(readme, /READINESS_URL=https:\/\/your-deploy\.example npm run verify:deploy/);
   assert.match(readme, /READINESS_URL=https:\/\/your-vercel-domain\.example npm run verify:deploy/);
   assert.match(readme, /docs\/live-event-readiness-plan\.md/);
-  assert.match(readme, /028_human_room_signal_snapshot\.sql/);
+  assert.match(readme, /034_prediction_serialization_readiness\.sql/);
   assert.match(workflow, /node-version: 22/);
   assert.match(workflow, /npm install/);
   assert.match(workflow, /CI: "false"/);
@@ -60,7 +76,7 @@ test("local Supabase runbook and scripts are wired", () => {
 test("live-event readiness plan captures the manual gates automation cannot prove", () => {
   const plan = fs.readFileSync("docs/live-event-readiness-plan.md", "utf8");
 
-  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/028_human_room_signal_snapshot\.sql` applied/);
+  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/034_prediction_serialization_readiness\.sql` applied/);
   assert.match(plan, /Critical Findings/);
   assert.match(plan, /Major Findings/);
   assert.match(plan, /Minor Findings/);
@@ -241,6 +257,17 @@ test("production readiness requires explicit QR base for long deployed join URLs
       .find((group) => group.title === "Runtime")
       ?.checks.some((item) => item.id === "stage-qr-base" && item.status === "pass")
   );
+
+  const withOverlongQrBase = buildReadinessReport(
+    store,
+    { ...deployEnv, NEXT_PUBLIC_QR_BASE_URL: `https://${"qr-too-long-".repeat(18)}example.com` },
+    "megathon-2026"
+  );
+  assert.ok(
+    withOverlongQrBase.groups
+      .find((group) => group.title === "Runtime")
+      ?.checks.some((item) => item.id === "stage-qr-base" && item.status === "fail")
+  );
 });
 
 test("live readiness fails fake Mollie payment lookup and passes successful smoke read", async () => {
@@ -290,6 +317,54 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
       .find((group) => group.title === "Live Integrations")
       ?.checks.some((item) => item.id === "mollie-live-payment" && item.status === "pass")
   );
+
+  const contract = {
+    ok: true,
+    contractVersion: "033_live_event_final_hardening",
+    checkoutIntentsTable: true,
+    checkoutIntentRecordRpc: true,
+    checkoutIntentLinkRpc: true,
+    pendingPurchaseRpc: true,
+    profileLockRpc: true,
+    poolSettlementRpc: true,
+    voidMarketRpc: true,
+    transitionMarketRpc: true,
+    marketSignalsRpc: true,
+    predictionLockHelperRpc: true,
+    predictionSerializedRpc: true,
+    agentPredictionSerializedRpc: true,
+    predictionIdempotencyColumn: true,
+    predictionRequestUniqueIndex: true,
+    resolutionCreditUniqueIndex: true,
+    voidRefundUniqueIndex: true,
+    pendingPurchaseUniqueIndex: true,
+    positionsSameEventTrigger: true,
+    predictionActionsSameEventTrigger: true,
+    stageFeatureNormalizeTrigger: true,
+    ledgerSettlementColumns: true
+  };
+  const staleContract = await buildReadinessReportWithLiveChecks(
+    store,
+    deployEnv,
+    "megathon-2026",
+    async () => new Response(JSON.stringify({ status: "paid" }), { status: 200 }),
+    contract
+  );
+  assert.equal(staleContract.ready, false);
+  assert.ok(
+    staleContract.groups
+      .find((group) => group.title === "Supabase Contract")
+      ?.checks.some((item) => item.id === "supabase-contract-version" && item.status === "fail")
+  );
+
+  const currentContract = await buildReadinessReportWithLiveChecks(
+    store,
+    deployEnv,
+    "megathon-2026",
+    async () => new Response(JSON.stringify({ status: "paid" }), { status: 200 }),
+    { ...contract, contractVersion: "034_prediction_serialization_readiness" }
+  );
+  assert.equal(currentContract.ready, true);
 });
 
 test("production base URL prefers Vercel origin over copied localhost placeholder", () => {

@@ -3,13 +3,16 @@ import { getParticipantSessionIdFromRequest } from "@/lib/auth";
 import { SAFE_COPY, TEST_CHECKOUT_CREDITS, TEST_CHECKOUT_EUR } from "@/lib/constants";
 import {
   attachPaymentToPurchaseData,
-  createPurchaseData,
+  createOrReusePendingPurchaseData,
   findEventByIdData,
   findReusablePendingPurchaseData,
-  getSessionParticipantData
+  getSessionParticipantData,
+  linkCheckoutIntentPurchaseData,
+  recordCheckoutIntentData
 } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
 import { hasCompletedProfile } from "@/lib/participants";
+import { verifyAndCreditPurchase } from "@/lib/payments";
 import { baseUrl } from "@/lib/utils";
 
 function safeReturnTo(value: unknown, eventSlug: string) {
@@ -61,7 +64,8 @@ async function createMolliePayment(purchaseId: string, eventSlug: string, return
       redirectUrl: returnUrl(purchaseId, eventSlug, returnTo),
       webhookUrl: `${baseUrl()}/api/payments/mollie/webhook`,
       metadata: { purchaseId, testOnly: true }
-    })
+    }),
+    signal: AbortSignal.timeout(5000)
   });
   if (!response.ok) throw new Error("Mollie test checkout could not be created.");
   const data = await response.json();
@@ -82,17 +86,31 @@ export async function POST(request: NextRequest) {
     if (!event) return badRequest("Event not found.", 404);
     if (event.emergencyPaused) return badRequest("The arena is paused by the organizer.", 423);
     const returnTo = safeReturnTo(body.returnTo, event.slug);
+    await recordCheckoutIntentData(session.participant.id);
     const reusable = await findReusablePendingPurchaseData(session.participant.id);
     if (reusable) {
+      const verified = await verifyAndCreditPurchase(reusable);
+      if (verified.purchase.status === "pending" && verified.purchase.checkoutUrl) {
+        await linkCheckoutIntentPurchaseData(session.participant.id, verified.purchase.id);
+        return json({
+          purchase: verified.purchase,
+          checkoutUrl: verified.purchase.checkoutUrl,
+          copy: SAFE_COPY.checkout
+        });
+      }
+    }
+    const purchase = await createOrReusePendingPurchaseData(session.participant.id);
+    if (purchase.checkoutUrl) {
+      await linkCheckoutIntentPurchaseData(session.participant.id, purchase.id);
       return json({
-        purchase: reusable,
-        checkoutUrl: reusable.checkoutUrl,
+        purchase,
+        checkoutUrl: purchase.checkoutUrl,
         copy: SAFE_COPY.checkout
       });
     }
-    const purchase = await createPurchaseData(session.participant.id);
     const payment = await createMolliePayment(purchase.id, event.slug, returnTo);
     const updated = await attachPaymentToPurchaseData(purchase.id, payment);
+    await linkCheckoutIntentPurchaseData(session.participant.id, updated.id);
     return json({
       purchase: updated,
       checkoutUrl: updated.checkoutUrl,

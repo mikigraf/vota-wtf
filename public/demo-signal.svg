@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700">
+  <rect width="1200" height="700" fill="#f7f4ec"/>
+  <rect x="160" y="110" width="880" height="480" rx="18" fill="#101114"/>
+  <path d="M230 455 L380 290 L485 360 L640 190 L805 330 L965 230" fill="none" stroke="#2eb67d" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="805" cy="330" r="58" fill="#fb5d3d"/>
+  <text x="600" y="645" text-anchor="middle" font-family="Arial, sans-serif" font-size="58" font-weight="800" fill="#101114">LIVE DEMO SIGNAL</text>
+</svg>

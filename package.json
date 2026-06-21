@@ -13,6 +13,9 @@
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "node --test -r ./tests/register-ts.cjs tests/*.test.ts",
+    "e2e": "playwright test",
+    "e2e:local": "node scripts/run-local-playwright.mjs",
+    "load:500": "node -r ./tests/register-ts.cjs scripts/load-500.ts",
     "readiness": "node scripts/check-readiness.mjs",
     "verify": "npm run lint && npm run test && npm run build && npm run readiness",
     "verify:deploy": "npm run lint && npm run test && npm run build && REQUIRE_READINESS_URL=1 npm run readiness",
@@ -35,6 +38,7 @@
     "autoprefixer": "10.4.21",
     "postcss": "8.4.31",
     "tailwindcss": "3.4.17",
+    "@playwright/test": "1.56.1",
     "typescript": "5.9.2"
   },
   "packageManager": "npm@10.9.2"
