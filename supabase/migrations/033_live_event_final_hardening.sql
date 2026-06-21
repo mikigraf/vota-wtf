@@ -202,6 +202,7 @@ declare
   v_losing_pool integer := 0;
   v_assigned_pool integer := 0;
   v_remaining_pool integer := 0;
+  v_unclaimed_pool integer := 0;
   v_pool_share integer := 0;
   v_payout integer := 0;
 begin
@@ -369,6 +370,7 @@ begin
       v_settled_credits := v_settled_credits + v_payout;
     end if;
   end loop;
+  v_unclaimed_pool := case when v_winning_pool = 0 then v_losing_pool else 0 end;
 
   perform recompute_oracle_scores_tx();
   v_aggregate := recompute_market_aggregate(p_market_id);
@@ -384,7 +386,8 @@ begin
       'settledCount', v_settled_count,
       'settledCredits', v_settled_credits,
       'winningPool', v_winning_pool,
-      'losingPool', v_losing_pool
+      'losingPool', v_losing_pool,
+      'unclaimedPool', v_unclaimed_pool
     ),
     p_ip
   );
@@ -395,7 +398,8 @@ begin
     'settledCount', v_settled_count,
     'settledCredits', v_settled_credits,
     'winningPool', v_winning_pool,
-    'losingPool', v_losing_pool
+    'losingPool', v_losing_pool,
+    'unclaimedPool', v_unclaimed_pool
   );
 end;
 $$;

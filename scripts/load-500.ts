@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
+import { DEFAULT_EVENT_SLUG } from "../src/lib/constants";
 import {
   createMarket,
   createParticipantSession,
@@ -22,7 +23,7 @@ function percentile(values: number[], pct: number) {
 
 const store = createSeedStore();
 const market = createMarket(store, {
-  eventSlug: "megathon-2026",
+  eventSlug: DEFAULT_EVENT_SLUG,
   title: `Load gate ${PARTICIPANT_COUNT}`,
   description: "Disposable local 500-user market journey.",
   category: "Load",
@@ -38,10 +39,10 @@ const requestIds: string[] = [];
 const participantIds: string[] = [];
 
 for (let index = 0; index < PARTICIPANT_COUNT; index += 1) {
-  const joined = createParticipantSession(store, "megathon-2026");
+  const joined = createParticipantSession(store, DEFAULT_EVENT_SLUG);
   const participant = updateParticipantProfile(store, joined.participant.id, {
     nickname: `load_user_${String(index + 1).padStart(3, "0")}`,
-    role: index % 3 === 0 ? "builder" : index % 3 === 1 ? "sponsor" : "investor"
+    email: `load-user-${String(index + 1).padStart(3, "0")}@example.test`
   });
   const outcome = outcomes[index % outcomes.length];
   const requestId = `load-${index + 1}`;
@@ -88,18 +89,27 @@ const winnerIds = new Set(
     .map((position) => position.participantId)
 );
 const settlementEntries = store.ledgerEntries.filter((entry) => entry.type === "resolution_credit" && entry.marketId === market.id);
+const platformProvisionEntries = store.ledgerEntries.filter((entry) => entry.type === "platform_provision" && entry.marketId === market.id);
 const totalRaw = store.positions
   .filter((position) => position.marketId === market.id)
   .reduce((sum, position) => sum + position.rawCredits, 0);
+const expectedPlatformProvision = store.positions
+  .filter((position) => position.marketId === market.id)
+  .reduce((sum, position) => sum + position.feeCredits, 0);
+const settledCredits = settlementEntries.reduce((sum, entry) => sum + entry.amountCredits, 0);
+const platformProvisionCredits = platformProvisionEntries.reduce((sum, entry) => sum + entry.amountCredits, 0);
 assert.equal(settlementEntries.length, winnerIds.size);
-assert.equal(settlementEntries.reduce((sum, entry) => sum + entry.amountCredits, 0), totalRaw);
+assert.equal(platformProvisionEntries.length, 1);
+assert.equal(platformProvisionCredits, expectedPlatformProvision);
+assert.equal(settledCredits + platformProvisionCredits, totalRaw);
 
 console.log(JSON.stringify({
   participants: PARTICIPANT_COUNT,
   actions: PARTICIPANT_COUNT,
   idempotencyReplays: REPLAY_COUNT,
   winners: winnerIds.size,
-  settledCredits: totalRaw,
+  settledCredits,
+  platformProvisionCredits,
   predictionMs: {
     p95: Number(percentile(durations, 95).toFixed(2)),
     p99: Number(percentile(durations, 99).toFixed(2))

@@ -8,6 +8,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const { id } = await params;
   const returnTo = `/admin/markets/${id}`;
   try {
+    const form = await request.formData();
+    if (String(form.get("confirmVoid") || "").trim() !== "VOID") {
+      throw new Error("Type VOID before voiding this market.");
+    }
     await voidMarketData(id, clientIpFromRequest(request));
     return Response.redirect(new URL(returnTo, request.url), 303);
   } catch (error) {

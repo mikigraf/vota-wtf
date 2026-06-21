@@ -22,7 +22,7 @@ test("Supabase realtime invalidation detects postgres change messages only", () 
 });
 
 test("Supabase realtime defaults avoid participant private data", () => {
-  assert.deepEqual(realtimeTableNames(), ["events", "markets", "outcomes", "market_aggregates"]);
+  assert.deepEqual(realtimeTableNames(), ["events", "markets", "outcomes"]);
 });
 
 test("participant prediction cards use polling instead of realtime subscriptions", () => {
@@ -55,6 +55,9 @@ test("MCP endpoint keeps a small non-admin tool surface", () => {
     "request_more_budget"
   ]);
   assert.doesNotMatch(route, /buy_tokens|resolve_market|create_market|adjust_ledger|execute_sql/);
-  assert.match(route, /market\.status === "open" && Boolean\(visibleEventId\) && market\.eventId === visibleEventId/);
-  assert.match(route, /visibleOpenMarkets\.find\(\(item\) => item\.id === body\.marketId\)/);
+  assert.doesNotMatch(route, /readDataStore/);
+  assert.match(route, /readPublicEventStoreData/);
+  assert.match(route, /readPublicMarketStoreData/);
+  assert.match(route, /market\.status === "open" && market\.eventId === visibleEvent\.id/);
+  assert.match(route, /event\?\.slug === readOnlyEventSlug/);
 });

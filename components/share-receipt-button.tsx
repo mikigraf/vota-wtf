@@ -21,15 +21,15 @@ export function ShareReceiptButton({ text }: { text: string }) {
   }
 
   return (
-    <div className="grid gap-2">
+    <div className="grid min-w-0 gap-2">
       <button
         type="button"
         onClick={share}
-        className="focus-ring min-h-12 rounded-full bg-ink px-5 text-sm font-black text-white"
+        className="focus-ring min-h-12 w-full min-w-0 rounded-full bg-ink px-5 text-sm font-black text-white"
       >
         Share receipt
       </button>
-      {message ? <p className="text-xs font-black text-muted">{message}</p> : null}
+      {message ? <p className="min-w-0 break-words text-xs font-black text-muted [overflow-wrap:anywhere]">{message}</p> : null}
     </div>
   );
 }

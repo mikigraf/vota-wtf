@@ -1,8 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700">
-  <rect width="1200" height="700" fill="#101114"/>
-  <rect x="120" y="115" width="210" height="470" fill="#fb5d3d"/>
-  <rect x="375" y="180" width="210" height="405" fill="#2eb67d"/>
-  <rect x="630" y="75" width="210" height="510" fill="#1f9bd1"/>
-  <rect x="885" y="240" width="210" height="345" fill="#f7f4ec"/>
-  <text x="600" y="650" text-anchor="middle" font-family="Arial, sans-serif" font-size="60" font-weight="800" fill="#f7f4ec">ROLE BATTLE</text>
-</svg>

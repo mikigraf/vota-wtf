@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -14,14 +15,20 @@ import { GET as checkoutStatusGet } from "../app/api/payments/mollie/status/rout
 import { POST as webhookPost } from "../app/api/payments/mollie/webhook/route";
 import { GET as reportGet } from "../app/api/admin/report/route";
 import { GET as readinessGet } from "../app/api/admin/readiness/route";
+import { GET as auditGet } from "../app/api/admin/audit/route";
+import { GET as adminMarketsGet } from "../app/api/admin/markets/route";
+import { POST as createEventPost } from "../app/api/admin/events/route";
 import { POST as reconcilePaymentPost } from "../app/api/admin/payments/reconcile/route";
+import { GET as adminPaymentsGet } from "../app/api/admin/payments/route";
 import { POST as createMcpTokenPost } from "../app/api/admin/mcp-tokens/route";
 import { POST as participantsPost } from "../app/api/admin/participants/route";
 import { POST as stagePost } from "../app/api/admin/stage/route";
 import { POST as resolveMarketPost } from "../app/api/admin/markets/[id]/resolve/route";
-import { POST as mcpPost } from "../app/mcp/route";
+import { POST as voidMarketPost } from "../app/api/admin/markets/[id]/void/route";
+import { DELETE as mcpDelete, GET as mcpGet, POST as mcpPost } from "../app/mcp/route";
 import { GET as publicReadinessGet } from "../app/api/readiness/route";
 import { adminApiCookieName, signAdminToken } from "../src/lib/auth";
+import { safeAdminNextPath, safeAdminReturnPath, safeCheckoutReturnPath, safeParticipantNextPath } from "../src/lib/safe-paths";
 import {
   createMarket,
   createParticipantSession,
@@ -90,6 +97,8 @@ test("actual route handlers support the Sunday participant checkout loop", async
       })
     );
     assert.equal(init.status, 200);
+    const initJson = await init.clone().json();
+    assert.equal("role" in initJson.participant, false);
     const participantCookie = cookieHeader(init);
     assert.match(participantCookie, /vota_participant_session=/);
 
@@ -104,8 +113,23 @@ test("actual route handlers support the Sunday participant checkout loop", async
     assert.equal(profile.status, 200);
     const profileJson = await profile.json();
     assert.equal(profileJson.participant.nickname, "demo_druid");
-    assert.equal(profileJson.participant.email, "demo.druid@example.test");
+    assert.equal("email" in profileJson.participant, false);
+    assert.equal("role" in profileJson.participant, false);
     assert.equal(profileJson.nextMarketId, SEED_IDS.markets.winner);
+
+    const recoveredInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon-2026" })
+      })
+    );
+    assert.equal(recoveredInit.status, 200);
+    const recoveredJson = await recoveredInit.json();
+    assert.equal(recoveredJson.profileComplete, true);
+    assert.equal(recoveredJson.nextMarketId, SEED_IDS.markets.winner);
+    assert.equal(recoveredJson.participant.nickname, "demo_druid");
 
     const editedGeneratedAvatarProfile = await profilePatch(
       request("http://localhost/api/session/profile", {
@@ -171,6 +195,7 @@ test("actual route handlers support the Sunday participant checkout loop", async
     const predictionJson = await prediction.json();
     assert.equal(predictionJson.position.outcomeId, SEED_IDS.outcomes.orbit);
     assert.equal(predictionJson.wallet.balanceCredits, 900);
+    assert.equal("role" in predictionJson.user.participant, false);
 
     const duplicatePrediction = await predictionPost(
       request(`http://localhost/api/markets/${SEED_IDS.markets.winner}/predict`, {
@@ -236,6 +261,192 @@ test("actual route handlers support the Sunday participant checkout loop", async
     else process.env.VOTA_STORE_FILE = previousStoreFile;
     if (previousMollie === undefined) delete process.env.MOLLIE_API_KEY;
     else process.env.MOLLIE_API_KEY = previousMollie;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("profile route rejects duplicate emails inside the same event", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-api-duplicate-email-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    writeStore(createSeedStore());
+    const firstInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon" })
+      })
+    );
+    const firstCookie = cookieHeader(firstInit);
+    const firstProfile = await profilePatch(
+      request("http://localhost/api/session/profile", {
+        method: "PATCH",
+        cookie: firstCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ nickname: "email_owner", email: "shared@example.test" })
+      })
+    );
+    assert.equal(firstProfile.status, 200);
+
+    const secondInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost", "x-vota-guard-key": "second-email-device" },
+        body: JSON.stringify({ eventSlug: "megathon" })
+      })
+    );
+    const duplicateProfile = await profilePatch(
+      request("http://localhost/api/session/profile", {
+        method: "PATCH",
+        cookie: cookieHeader(secondInit),
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ nickname: "email_second", email: "shared@example.test" })
+      })
+    );
+    assert.equal(duplicateProfile.status, 400);
+    assert.match((await duplicateProfile.json()).error, /email is already in the arena/);
+
+    const unsupportedInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost", "x-vota-guard-key": "unsupported-name-device" },
+        body: JSON.stringify({ eventSlug: "megathon" })
+      })
+    );
+    const unsupportedProfile = await profilePatch(
+      request("http://localhost/api/session/profile", {
+        method: "PATCH",
+        cookie: cookieHeader(unsupportedInit),
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ nickname: "🔥🔥🔥", email: "unsupported@example.test" })
+      })
+    );
+    assert.equal(unsupportedProfile.status, 400);
+    assert.match((await unsupportedProfile.json()).error, /letters, numbers, spaces, dots, dashes, or underscores/);
+
+    const testingInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost", "x-vota-guard-key": "testing-email-device" },
+        body: JSON.stringify({ eventSlug: "testingmiki" })
+      })
+    );
+    const testingProfile = await profilePatch(
+      request("http://localhost/api/session/profile", {
+        method: "PATCH",
+        cookie: cookieHeader(testingInit),
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ nickname: "testing_email", email: "shared@example.test" })
+      })
+    );
+    assert.equal(testingProfile.status, 200);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin participant moderation updates live market signal atomically", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-moderation-flow-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const store = createSeedStore();
+    const market = createMarket(store, {
+      eventSlug: "megathon",
+      title: "Moderation integrity check",
+      description: "Disposable market for aggregate moderation coverage.",
+      category: "Test",
+      resolutionRule: "Resolved by test.",
+      outcomes: [{ label: "Alpha" }, { label: "Beta" }],
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: 10,
+      fairLaunchSignalCreditsThreshold: 1000,
+      maxActionStake: 250,
+      blindLaunchEnabled: false
+    });
+    transitionMarket(store, market.id, "open");
+    writeStore(store);
+
+    const init = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon" })
+      })
+    );
+    assert.equal(init.status, 200);
+    const participantCookie = cookieHeader(init);
+    const profile = await completeParticipantProfile(participantCookie, "moderated_one");
+    const participantId = profile.participant.id;
+    const outcomeId = readStore().outcomes.find((item) => item.marketId === market.id)?.id;
+    assert.ok(outcomeId);
+
+    const prediction = await predictionPost(
+      request(`http://localhost/api/markets/${market.id}/predict`, {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost", "idempotency-key": "moderation-1" },
+        body: JSON.stringify({ outcomeId, amountCredits: 100, requestId: "moderation-1" })
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(prediction.status, 200);
+    assert.equal(readStore().marketAggregates.find((item) => item.marketId === market.id)?.totalPeople, 1);
+
+    const adminCookie = await adminCookieHeader();
+    const ban = await participantsPost(
+      request("http://localhost/api/admin/participants", {
+        method: "POST",
+        cookie: adminCookie,
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: "http://localhost" },
+        body: new URLSearchParams({ participantId, action: "ban", eventSlug: "megathon" })
+      })
+    );
+    assert.equal(ban.status, 303);
+    const bannedStore = readStore();
+    const bannedParticipant = bannedStore.participants.find((item) => item.id === participantId);
+    const bannedAggregate = bannedStore.marketAggregates.find((item) => item.marketId === market.id);
+    assert.equal(bannedParticipant?.isBanned, true);
+    assert.equal(bannedAggregate?.totalPeople, 0);
+    assert.equal(bannedAggregate?.totalSignalCredits, 0);
+    assert.ok(bannedStore.adminAuditLogs.some((item) => item.action === "participant_ban" && item.entityId === participantId));
+
+    const blockedPrediction = await predictionGet(
+      request(`http://localhost/api/markets/${market.id}/predict?outcomeId=${outcomeId}&amountCredits=100`, {
+        method: "GET",
+        cookie: participantCookie,
+        headers: { origin: "http://localhost" }
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(blockedPrediction.status, 403);
+
+    const unban = await participantsPost(
+      request("http://localhost/api/admin/participants", {
+        method: "POST",
+        cookie: adminCookie,
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: "http://localhost" },
+        body: new URLSearchParams({ participantId, action: "unban", eventSlug: "megathon" })
+      })
+    );
+    assert.equal(unban.status, 303);
+    const unbannedAggregate = readStore().marketAggregates.find((item) => item.marketId === market.id);
+    assert.equal(unbannedAggregate?.totalPeople, 1);
+    assert.equal(unbannedAggregate?.totalSignalCredits, 98);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -316,6 +527,34 @@ test("admin login form failures redirect back with inline error state", async ()
   }
 });
 
+test("admin middleware preserves scoped query params through login", async () => {
+  const response = await middleware(request("http://localhost/admin/payments?eventSlug=testingmiki"));
+  assert.equal(response.status, 307);
+  const location = new URL(response.headers.get("location") || "");
+  assert.equal(location.pathname, "/admin/login");
+  assert.equal(location.searchParams.get("next"), "/admin/payments?eventSlug=testingmiki");
+});
+
+test("local redirect helpers reject malformed or privileged paths", () => {
+  assert.equal(safeParticipantNextPath("/m/market-1?from=qr"), "/m/market-1?from=qr");
+  assert.equal(safeParticipantNextPath("/e/megathon?checkout=abc"), "/e/megathon?checkout=abc");
+  assert.equal(safeParticipantNextPath("/admin/stage"), "");
+  assert.equal(safeParticipantNextPath("/api/session/init"), "");
+  assert.equal(safeParticipantNextPath("//evil.test/admin"), "");
+  assert.equal(safeParticipantNextPath("/m\\evil"), "");
+  assert.equal(safeParticipantNextPath("/m/%5cevil"), "");
+  assert.equal(safeAdminNextPath("/admin/payments?eventSlug=testingmiki"), "/admin/payments?eventSlug=testingmiki");
+  assert.equal(safeAdminNextPath("/admin/login?next=/admin"), "/admin");
+  assert.equal(safeAdminNextPath("/administrator"), "/admin");
+  assert.equal(safeAdminNextPath("//evil.test/admin"), "/admin");
+  assert.equal(safeAdminReturnPath("/admin/events/megathon", "/admin/stage"), "/admin/events/megathon");
+  assert.equal(safeAdminReturnPath("/e/megathon", "/admin/stage"), "/admin/stage");
+  assert.equal(safeCheckoutReturnPath("/m/abc?checkout=old&tab=odds", "megathon"), "/m/abc?tab=odds");
+  assert.equal(safeCheckoutReturnPath("/admin/stage", "megathon"), "/e/megathon");
+  assert.equal(safeCheckoutReturnPath("/api/readiness", "megathon"), "/e/megathon");
+  assert.equal(safeCheckoutReturnPath("//evil.test/pay", "megathon"), "/e/megathon");
+});
+
 test("admin participant moderation form failures redirect back with context", async () => {
   const previousBackend = process.env.VOTA_DATA_BACKEND;
   const previousStoreFile = process.env.VOTA_STORE_FILE;
@@ -338,7 +577,6 @@ test("admin participant moderation form failures redirect back with context", as
         body: new URLSearchParams({
           eventSlug: "megathon-2026",
           q: "oracle",
-          role: "builder",
           participantId: participant.id,
           action: "teleport"
         })
@@ -349,8 +587,240 @@ test("admin participant moderation form failures redirect back with context", as
     assert.equal(location.pathname, "/admin/participants");
     assert.equal(location.searchParams.get("eventSlug"), "megathon-2026");
     assert.equal(location.searchParams.get("q"), "oracle");
-    assert.equal(location.searchParams.get("role"), "builder");
+    assert.equal(location.searchParams.get("role"), null);
     assert.match(location.searchParams.get("error") || "", /Unknown participant action/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin participant moderation rejects cross-event participant ids", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-participant-event-scope-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const store = createSeedStore();
+    const sideParticipant = createParticipantSession(store, "testingmiki").participant;
+    writeStore(store);
+    const response = await participantsPost(
+      request("http://localhost/api/admin/participants", {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams({
+          eventSlug: "megathon",
+          participantId: sideParticipant.id,
+          action: "ban"
+        })
+      })
+    );
+    assert.equal(response.status, 303);
+    const location = new URL(response.headers.get("location") || "");
+    assert.equal(location.pathname, "/admin/participants");
+    assert.equal(location.searchParams.get("eventSlug"), "megathon");
+    assert.match(location.searchParams.get("error") || "", /Participant does not belong to this event/);
+    assert.equal(readStore().participants.find((participant) => participant.id === sideParticipant.id)?.isBanned, false);
+
+    const missingEventContext = await participantsPost(
+      request("http://localhost/api/admin/participants", {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams({
+          participantId: sideParticipant.id,
+          action: "ban"
+        })
+      })
+    );
+    assert.equal(missingEventContext.status, 303);
+    const missingEventLocation = new URL(missingEventContext.headers.get("location") || "");
+    assert.equal(missingEventLocation.pathname, "/admin/participants");
+    assert.equal(missingEventLocation.searchParams.get("eventSlug"), "megathon");
+    assert.match(missingEventLocation.searchParams.get("error") || "", /Event context is required/);
+    assert.equal(readStore().participants.find((participant) => participant.id === sideParticipant.id)?.isBanned, false);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin markets API is scoped to the selected event", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-admin-market-scope-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const store = createSeedStore();
+    writeStore(store);
+    const testingEvent = store.events.find((event) => event.slug === "testingmiki");
+    const megathonEvent = store.events.find((event) => event.slug === "megathon");
+    assert.ok(testingEvent);
+    assert.ok(megathonEvent);
+
+    const testingResponse = await adminMarketsGet(
+      request("http://localhost/api/admin/markets?eventSlug=testingmiki", {
+        cookie: await adminCookieHeader()
+      })
+    );
+    assert.equal(testingResponse.status, 200);
+    const testingPayload = await testingResponse.json();
+    assert.equal(testingPayload.event.slug, "testingmiki");
+    assert.equal(testingPayload.markets.length > 0, true);
+    assert.equal(testingPayload.markets.every((market: { eventId: string }) => market.eventId === testingEvent.id), true);
+    assert.equal(testingPayload.markets.some((market: { eventId: string }) => market.eventId === megathonEvent.id), false);
+    const testingMarketIds = new Set(testingPayload.markets.map((market: { id: string }) => market.id));
+    assert.equal(testingPayload.outcomes.every((outcome: { marketId: string }) => testingMarketIds.has(outcome.marketId)), true);
+    assert.equal(testingPayload.aggregates.every((aggregate: { marketId: string }) => testingMarketIds.has(aggregate.marketId)), true);
+
+    const defaultResponse = await adminMarketsGet(
+      request("http://localhost/api/admin/markets", {
+        cookie: await adminCookieHeader()
+      })
+    );
+    assert.equal(defaultResponse.status, 200);
+    const defaultPayload = await defaultResponse.json();
+    assert.equal(defaultPayload.event.slug, "megathon");
+    assert.equal(defaultPayload.markets.every((market: { eventId: string }) => market.eventId === megathonEvent.id), true);
+    assert.equal(defaultPayload.markets.some((market: { eventId: string }) => market.eventId === testingEvent.id), false);
+
+    const missingResponse = await adminMarketsGet(
+      request("http://localhost/api/admin/markets?eventSlug=missing-room", {
+        cookie: await adminCookieHeader()
+      })
+    );
+    assert.equal(missingResponse.status, 404);
+    assert.match((await missingResponse.json()).error, /Event not found/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin events API creates new rooms and rejects duplicate slugs", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-admin-create-event-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    writeStore(createSeedStore());
+    const form = new FormData();
+    form.set("name", "Demo Night Finals");
+    form.set("slug", "Demo Night Finals!");
+    form.set("status", "live");
+    form.set("starterCredits", "1500");
+    form.set("returnTo", "/admin/events");
+
+    const response = await createEventPost(
+      request("http://localhost/api/admin/events", {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: { origin: "http://localhost" },
+        body: form
+      })
+    );
+    assert.equal(response.status, 303);
+    const location = new URL(response.headers.get("location") || "");
+    assert.equal(location.pathname, "/admin/events/demo-night-finals");
+
+    const store = readStore();
+    const event = store.events.find((item) => item.slug === "demo-night-finals");
+    assert.ok(event);
+    assert.equal(event.name, "Demo Night Finals");
+    assert.equal(event.status, "live");
+    assert.equal(event.starterCredits, 1500);
+    assert.equal(event.stageMode, "join");
+    assert.equal(store.adminAuditLogs.some((log) => log.action === "create_event" && log.entityId === event.id), true);
+
+    const duplicate = await createEventPost(
+      request("http://localhost/api/admin/events", {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: { "content-type": "application/json", accept: "application/json", origin: "http://localhost" },
+        body: JSON.stringify({
+          name: "Duplicate Demo Night",
+          slug: "demo-night-finals",
+          returnTo: "/admin/events"
+        })
+      })
+    );
+    assert.equal(duplicate.status, 400);
+    assert.match((await duplicate.json()).error, /already in use/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin audit API defaults to the selected room instead of leaking all rooms", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-admin-audit-scope-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const store = createSeedStore();
+    const megathonMarket = createMarket(store, {
+      eventSlug: "megathon",
+      title: "Megathon audit scoped market",
+      description: "Visible only in Megathon audit logs.",
+      category: "Ops",
+      resolutionRule: "Admin resolves.",
+      outcomes: [{ label: "A" }, { label: "B" }]
+    });
+    const testingMarket = createMarket(store, {
+      eventSlug: "testingmiki",
+      title: "Testingmiki audit scoped market",
+      description: "Visible only in testingmiki audit logs.",
+      category: "Ops",
+      resolutionRule: "Admin resolves.",
+      outcomes: [{ label: "A" }, { label: "B" }]
+    });
+    writeStore(store);
+
+    const defaultResponse = await auditGet(
+      request("http://localhost/api/admin/audit?action=create_market&q=audit%20scoped", {
+        cookie: await adminCookieHeader()
+      })
+    );
+    assert.equal(defaultResponse.status, 200);
+    const defaultPayload = await defaultResponse.json();
+    assert.equal(defaultPayload.auditLogs.some((log: { entityId: string }) => log.entityId === megathonMarket.id), true);
+    assert.equal(defaultPayload.auditLogs.some((log: { entityId: string }) => log.entityId === testingMarket.id), false);
+
+    const testingResponse = await auditGet(
+      request("http://localhost/api/admin/audit?eventSlug=testingmiki&action=create_market&q=audit%20scoped", {
+        cookie: await adminCookieHeader()
+      })
+    );
+    assert.equal(testingResponse.status, 200);
+    const testingPayload = await testingResponse.json();
+    assert.equal(testingPayload.auditLogs.some((log: { entityId: string }) => log.entityId === testingMarket.id), true);
+    assert.equal(testingPayload.auditLogs.some((log: { entityId: string }) => log.entityId === megathonMarket.id), false);
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;
@@ -554,6 +1024,106 @@ test("admin resolve form requires official-result confirmation before mutating m
     const after = readStore().markets.find((item) => item.id === market.id);
     assert.equal(after?.status, "locked");
     assert.equal(after?.resolvedOutcomeId, undefined);
+
+    const emptyWinner = await resolveMarketPost(
+      request(`http://localhost/api/admin/markets/${market.id}/resolve`, {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams({
+          confirmResolution: "on",
+          note: "Official stage result."
+        })
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(emptyWinner.status, 303);
+    const emptyLocation = new URL(emptyWinner.headers.get("location") || "");
+    assert.match(emptyLocation.searchParams.get("error") || "", /Choose the official winning outcome/);
+
+    const wrongTypedLabel = await resolveMarketPost(
+      request(`http://localhost/api/admin/markets/${market.id}/resolve`, {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams({
+          confirmResolution: "on",
+          outcomeId: SEED_IDS.outcomes.orbit,
+          confirmOutcomeLabel: "Team Nova",
+          note: "Official stage result."
+        })
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(wrongTypedLabel.status, 303);
+    const wrongLabelLocation = new URL(wrongTypedLabel.headers.get("location") || "");
+    assert.match(wrongLabelLocation.searchParams.get("error") || "", /Type "Team Orbit"/);
+    const stillLocked = readStore().markets.find((item) => item.id === market.id);
+    assert.equal(stillLocked?.status, "locked");
+    assert.equal(stillLocked?.resolvedOutcomeId, undefined);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin void route requires typed confirmation before mutating market", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-void-confirm-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const store = createSeedStore();
+    const market = store.markets.find((item) => item.id === SEED_IDS.markets.winner);
+    assert.ok(market);
+    writeStore(store);
+
+    const missing = await voidMarketPost(
+      request(`http://localhost/api/admin/markets/${market.id}/void`, {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams()
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(missing.status, 303);
+    const missingLocation = new URL(missing.headers.get("location") || "");
+    assert.equal(missingLocation.pathname, `/admin/markets/${market.id}`);
+    assert.match(missingLocation.searchParams.get("error") || "", /Type VOID/);
+    assert.equal(readStore().markets.find((item) => item.id === market.id)?.status, "open");
+
+    const confirmed = await voidMarketPost(
+      request(`http://localhost/api/admin/markets/${market.id}/void`, {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams({ confirmVoid: "VOID" })
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(confirmed.status, 303);
+    assert.equal(readStore().markets.find((item) => item.id === market.id)?.status, "voided");
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;
@@ -663,7 +1233,7 @@ test("admin payment reconciliation credits a pending local checkout", async () =
       request("http://localhost/api/session/init", {
         method: "POST",
         headers: { "content-type": "application/json", origin: "http://localhost" },
-        body: JSON.stringify({ eventSlug: "megathon-2026" })
+        body: JSON.stringify({ eventSlug: "megathon" })
       })
     );
     const participantCookie = cookieHeader(init);
@@ -702,6 +1272,199 @@ test("admin payment reconciliation credits a pending local checkout", async () =
     else process.env.MOLLIE_API_KEY = previousMollie;
     if (previousNodeEnv === undefined) delete mutableEnv.NODE_ENV;
     else mutableEnv.NODE_ENV = previousNodeEnv;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("participant checkout reuse is scoped to the current return path", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const previousMollie = process.env.MOLLIE_API_KEY;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousFetch = globalThis.fetch;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-checkout-return-"));
+  const mutableEnv = process.env as Record<string, string | undefined>;
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  process.env.MOLLIE_API_KEY = "test_123456789012345678901234567890";
+  mutableEnv.NODE_ENV = "development";
+  try {
+    writeStore(createSeedStore());
+    globalThis.fetch = async (input: URL | RequestInfo, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/v2/payments/")) {
+        const paymentId = decodeURIComponent(url.split("/").pop() || "");
+        const purchase = readStore().purchases.find((item) => item.molliePaymentId === paymentId);
+        return new Response(JSON.stringify({
+          id: paymentId,
+          status: "pending",
+          amount: { currency: "EUR", value: "1.00" },
+          metadata: { purchaseId: purchase?.id, testOnly: true },
+          _links: { checkout: { href: purchase?.checkoutUrl || `https://mollie.test/checkout/${paymentId}` } }
+        }), { status: 200 });
+      }
+      const body = JSON.parse(String(init?.body || "{}"));
+      const purchaseId = String(body.metadata?.purchaseId || "missing");
+      return new Response(JSON.stringify({
+        id: `tr_${purchaseId}`,
+        _links: { checkout: { href: `https://mollie.test/checkout/${purchaseId}` } }
+      }), { status: 200 });
+    };
+
+    const init = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon" })
+      })
+    );
+    const participantCookie = cookieHeader(init);
+    await completeParticipantProfile(participantCookie, "return_path_builder");
+    const megathonMarketId = "00000000-0000-4000-8000-000000001001";
+    const testingMarketId = "00000000-0000-4000-8000-000000001101";
+
+    const first = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ returnTo: `/m/${megathonMarketId}?tab=odds` })
+      })
+    );
+    assert.equal(first.status, 200);
+    const firstJson = await first.json();
+    assert.equal(firstJson.purchase.returnTo, `/m/${megathonMarketId}?tab=odds`);
+
+    const samePath = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ returnTo: `/m/${megathonMarketId}?tab=odds` })
+      })
+    );
+    assert.equal(samePath.status, 200);
+    const samePathJson = await samePath.json();
+    assert.equal(samePathJson.purchase.id, firstJson.purchase.id);
+    assert.equal(samePathJson.checkoutUrl, firstJson.checkoutUrl);
+
+    const differentPath = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ returnTo: "/e/megathon" })
+      })
+    );
+    assert.equal(differentPath.status, 200);
+    const differentPathJson = await differentPath.json();
+    assert.notEqual(differentPathJson.purchase.id, firstJson.purchase.id);
+    const store = readStore();
+    assert.equal(store.purchases.find((item) => item.id === firstJson.purchase.id)?.status, "canceled");
+    assert.equal(store.purchases.find((item) => item.id === differentPathJson.purchase.id)?.returnTo, "/e/megathon");
+
+    const wrongEventHome = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ returnTo: "/e/testingmiki" })
+      })
+    );
+    assert.equal(wrongEventHome.status, 200);
+    const wrongEventHomeJson = await wrongEventHome.json();
+    assert.equal(wrongEventHomeJson.purchase.returnTo, "/e/megathon");
+
+    const wrongEventMarket = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ returnTo: `/m/${testingMarketId}` })
+      })
+    );
+    assert.equal(wrongEventMarket.status, 200);
+    const wrongEventMarketJson = await wrongEventMarket.json();
+    assert.equal(wrongEventMarketJson.purchase.returnTo, "/e/megathon");
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    if (previousMollie === undefined) delete process.env.MOLLIE_API_KEY;
+    else process.env.MOLLIE_API_KEY = previousMollie;
+    mutableEnv.NODE_ENV = previousNodeEnv;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin payments API exports checkout intent rows with repeat click value", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const previousMollie = process.env.MOLLIE_API_KEY;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-payment-intent-export-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  delete process.env.MOLLIE_API_KEY;
+  try {
+    writeStore(createSeedStore());
+    const init = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon" })
+      })
+    );
+    const participantCookie = cookieHeader(init);
+    await completeParticipantProfile(participantCookie, "intent_exporter");
+
+    for (let index = 0; index < 2; index += 1) {
+      const response = await createCheckoutPost(
+        request("http://localhost/api/payments/mollie/create-test-checkout", {
+          method: "POST",
+          cookie: participantCookie,
+          headers: { origin: "http://localhost" }
+        })
+      );
+      assert.equal(response.status, 200);
+    }
+
+    const jsonResponse = await adminPaymentsGet(
+      request("http://localhost/api/admin/payments?eventSlug=megathon", {
+        cookie: await adminCookieHeader(),
+        headers: { origin: "http://localhost" }
+      })
+    );
+    assert.equal(jsonResponse.status, 200);
+    const payload = await jsonResponse.json();
+    assert.equal(payload.metrics.intentCount, 1);
+    assert.equal(payload.metrics.intentClicks, 2);
+    assert.equal(payload.metrics.intentProjectedEur, 1);
+    assert.equal(payload.metrics.intentClickProjectedEur, 2);
+    assert.equal(payload.checkoutIntents[0].participantName, "intent_exporter");
+    assert.equal(payload.checkoutIntents[0].totalClickValueEur, 2);
+
+    const csvResponse = await adminPaymentsGet(
+      request("http://localhost/api/admin/payments?eventSlug=megathon&format=csv&type=intents", {
+        cookie: await adminCookieHeader(),
+        headers: { origin: "http://localhost" }
+      })
+    );
+    assert.equal(csvResponse.status, 200);
+    assert.match(csvResponse.headers.get("content-disposition") || "", /vota-checkout-intents\.csv/);
+    const csv = await csvResponse.text();
+    assert.match(csv, /participantName/);
+    assert.match(csv, /intent_exporter/);
+    assert.match(csv, /totalClickValueEur/);
+    assert.match(csv, /"2","1","2","100","200"/);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    if (previousMollie === undefined) delete process.env.MOLLIE_API_KEY;
+    else process.env.MOLLIE_API_KEY = previousMollie;
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
 });
@@ -746,6 +1509,69 @@ test("participant checkout status endpoint verifies and credits an owned pending
     assert.equal(statusJson.purchase.status, "credited");
     assert.equal(statusJson.credited, true);
     assert.equal(statusJson.wallet.balanceCredits, (beforeBalance || 0) + checkoutJson.purchase.credits);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    if (previousMollie === undefined) delete process.env.MOLLIE_API_KEY;
+    else process.env.MOLLIE_API_KEY = previousMollie;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("participant checkout status rejects another profile's purchase without crediting", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const previousMollie = process.env.MOLLIE_API_KEY;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-checkout-wrong-profile-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  delete process.env.MOLLIE_API_KEY;
+  try {
+    writeStore(createSeedStore());
+    const firstInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon-2026" })
+      })
+    );
+    const firstCookie = cookieHeader(firstInit);
+    await completeParticipantProfile(firstCookie, "checkout_owner");
+    const checkout = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: firstCookie,
+        headers: { origin: "http://localhost" }
+      })
+    );
+    const checkoutJson = await checkout.json();
+
+    const secondInit = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost", "x-vota-guard-key": "wrong-profile-device" },
+        body: JSON.stringify({ eventSlug: "megathon-2026" })
+      })
+    );
+    const secondCookie = cookieHeader(secondInit);
+    await completeParticipantProfile(secondCookie, "checkout_intruder");
+    const before = readStore();
+    const ownerWallet = before.wallets.find((item) => item.participantId === checkoutJson.purchase.participantId);
+
+    const status = await checkoutStatusGet(
+      request(`http://localhost/api/payments/mollie/status?purchaseId=${checkoutJson.purchase.id}`, {
+        cookie: secondCookie,
+        headers: { origin: "http://localhost" }
+      })
+    );
+    assert.equal(status.status, 404);
+    const statusJson = await status.json();
+    assert.equal(statusJson.error, "Purchase not found.");
+    const after = readStore();
+    assert.equal(after.purchases.find((item) => item.id === checkoutJson.purchase.id)?.status, "pending");
+    assert.equal(after.wallets.find((item) => item.participantId === checkoutJson.purchase.participantId)?.balanceCredits, ownerWallet?.balanceCredits);
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;
@@ -865,6 +1691,62 @@ test("Mollie form webhook acknowledges provider callbacks without redirect", asy
     const webhookJson = await webhook.json();
     assert.equal(webhookJson.ok, true);
     assert.equal(webhookJson.purchase.status, "credited");
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    if (previousMollie === undefined) delete process.env.MOLLIE_API_KEY;
+    else process.env.MOLLIE_API_KEY = previousMollie;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("local checkout redirect falls back to the owning event on unsafe return paths", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const previousMollie = process.env.MOLLIE_API_KEY;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-local-checkout-safe-return-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  delete process.env.MOLLIE_API_KEY;
+  try {
+    writeStore(createSeedStore());
+    const init = await initSessionPost(
+      request("http://localhost/api/session/init", {
+        method: "POST",
+        headers: { "content-type": "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "megathon-2026" })
+      })
+    );
+    const participantCookie = cookieHeader(init);
+    await completeParticipantProfile(participantCookie, "unsafe_checkout_builder");
+    const checkout = await createCheckoutPost(
+      request("http://localhost/api/payments/mollie/create-test-checkout", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: { origin: "http://localhost" },
+        body: JSON.stringify({ returnTo: "/m/safe-market?checkout=old" })
+      })
+    );
+    const checkoutJson = await checkout.json();
+    const form = new URLSearchParams({
+      purchaseId: checkoutJson.purchase.id,
+      redirectToEvent: "1",
+      returnTo: "//evil.test/pay"
+    });
+    const webhook = await webhookPost(
+      request("http://localhost/api/payments/mollie/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded", origin: "http://localhost" },
+        body: form
+      })
+    );
+    assert.equal(webhook.status, 303);
+    const location = new URL(webhook.headers.get("location") || "");
+    assert.equal(location.pathname, "/e/megathon-2026");
+    assert.equal(location.searchParams.get("checkout"), checkoutJson.purchase.id);
+    assert.equal(location.hostname, "localhost");
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;
@@ -1096,12 +1978,23 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     assert.match((await unscopedTokenResponse.json()).error, /Choose a participant/);
 
     const tokenRequestedAt = Date.now();
+    const crossEventTokenResponse = await createMcpTokenPost(
+      request("http://localhost/api/admin/mcp-tokens", {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: { "content-type": "application/json", accept: "application/json", origin: "http://localhost" },
+        body: JSON.stringify({ eventSlug: "testingmiki", participantId: profileJson.participant.id, expiresInHours: 24 })
+      })
+    );
+    assert.equal(crossEventTokenResponse.status, 400);
+    assert.match((await crossEventTokenResponse.json()).error, /Participant does not belong to this event/);
+
     const tokenResponse = await createMcpTokenPost(
       request("http://localhost/api/admin/mcp-tokens", {
         method: "POST",
         cookie: await adminCookieHeader(),
         headers: { "content-type": "application/json", accept: "application/json", origin: "http://localhost" },
-        body: JSON.stringify({ participantId: profileJson.participant.id, expiresInHours: 999999 })
+        body: JSON.stringify({ eventSlug: "megathon-2026", participantId: profileJson.participant.id, expiresInHours: 999999 })
       })
     );
     assert.equal(tokenResponse.status, 200);
@@ -1130,6 +2023,79 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     const initializeJson = await initialize.json();
     assert.equal(initializeJson.result.protocolVersion, "2025-06-18");
     assert.ok(initializeJson.result.capabilities.tools);
+    const mcpSessionId = initialize.headers.get("mcp-session-id");
+    assert.match(mcpSessionId || "", /^vota_/);
+    assert.match(initialize.headers.get("access-control-expose-headers") || "", /Mcp-Session-Id/);
+
+    const initialized = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-session-id": mcpSessionId || ""
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })
+      })
+    );
+    assert.equal(initialized.status, 202);
+    assert.equal(await initialized.text(), "");
+
+    const batch = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          "mcp-session-id": mcpSessionId || ""
+        },
+        body: JSON.stringify([
+          { jsonrpc: "2.0", id: "batch-ping", method: "ping" },
+          { jsonrpc: "2.0", id: "batch-tools", method: "tools/list" },
+          { jsonrpc: "2.0", method: "notifications/initialized" }
+        ])
+      })
+    );
+    assert.equal(batch.status, 200);
+    const batchJson = await batch.json();
+    assert.equal(batchJson.length, 2);
+    assert.equal(batchJson[0].id, "batch-ping");
+    assert.equal(batchJson[1].id, "batch-tools");
+
+    const sse = await mcpGet(
+      request("http://localhost/mcp", {
+        method: "GET",
+        headers: {
+          accept: "text/event-stream",
+          "mcp-protocol-version": "2025-06-18",
+          "mcp-session-id": mcpSessionId || ""
+        }
+      })
+    );
+    assert.equal(sse.status, 200);
+    assert.match(sse.headers.get("content-type") || "", /text\/event-stream/);
+    const reader = sse.body?.getReader();
+    assert.ok(reader);
+    const firstChunk = await reader.read();
+    assert.match(new TextDecoder().decode(firstChunk.value), /MCP stream ready/);
+    await reader.cancel();
+
+    const badAccept = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: "bad-accept", method: "ping" })
+      })
+    );
+    assert.equal(badAccept.status, 406);
+
+    const closed = await mcpDelete(
+      request("http://localhost/mcp", {
+        method: "DELETE",
+        headers: { "mcp-session-id": mcpSessionId || "" }
+      })
+    );
+    assert.equal(closed.status, 202);
 
     const tools = await mcpPost(
       request("http://localhost/mcp", {
@@ -1230,6 +2196,23 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     assert.ok(unauthSideEventIds.includes(SEED_IDS.markets.livestream));
     assert.equal(unauthSideEventIds.includes(SEED_IDS.markets.winner), false);
 
+    const sideEventBudget = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        headers: { "content-type": "application/json", accept: "application/json, text/event-stream" },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "budget-side-event-1",
+          method: "tools/call",
+          params: { name: "request_more_budget", arguments: { eventSlug: "testingmiki" } }
+        })
+      })
+    );
+    assert.equal(sideEventBudget.status, 200);
+    const sideEventBudgetJson = await sideEventBudget.json();
+    assert.match(sideEventBudgetJson.result.structuredContent.message, /testingmiki test checkout/);
+    assert.doesNotMatch(sideEventBudgetJson.result.structuredContent.message, /MEGATHON/);
+
     const crossEventMarket = await mcpPost(
       request("http://localhost/mcp", {
         method: "POST",
@@ -1266,6 +2249,46 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     );
     assert.equal(denied.status, 401);
 
+    const legacyBroadToken = "mcp_legacy_unscoped_token_123456";
+    const legacyStore = readStore();
+    legacyStore.mcpTokens.push({
+      id: "legacy-unscoped-token",
+      tokenHash: createHash("sha256").update(legacyBroadToken).digest("hex"),
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    });
+    writeStore(legacyStore);
+
+    const deniedLegacyBroadToken = await mcpPost(
+      request("http://localhost/mcp", {
+        method: "POST",
+        cookie: participantCookie,
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          authorization: `Bearer ${legacyBroadToken}`
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "legacy-broad-place-1",
+          method: "tools/call",
+          params: {
+            name: "place_prediction",
+            arguments: {
+              marketId: SEED_IDS.markets.winner,
+              outcomeId: SEED_IDS.outcomes.orbit,
+              amountCredits: 100,
+              requestId: "mcp-legacy-broad-place-1"
+            }
+          }
+        })
+      })
+    );
+    assert.equal(deniedLegacyBroadToken.status, 200);
+    const deniedLegacyBroadTokenJson = await deniedLegacyBroadToken.json();
+    assert.equal(deniedLegacyBroadTokenJson.result.isError, true);
+    assert.match(deniedLegacyBroadTokenJson.result.content[0].text, /MCP write token required/);
+
     const placed = await mcpPost(
       request("http://localhost/mcp", {
         method: "POST",
@@ -1293,7 +2316,7 @@ test("admin can provision a scoped MCP token for external prediction tools", asy
     assert.equal(placed.status, 200);
     const placedJson = await placed.json();
     assert.equal(placedJson.result.structuredContent.result.position.outcomeId, SEED_IDS.outcomes.orbit);
-    assert.equal(readStore().mcpTokens.length, 1);
+    assert.equal(readStore().mcpTokens.length, 2);
     assert.equal(readStore().adminAuditLogs.some((log) => log.action === "create_mcp_token"), true);
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
@@ -1322,18 +2345,22 @@ test("admin report API exports CSV, Cala JSON, and PixVerse JSON", async () => {
     assert.match(await csv.text(), /"overview","Participants","count"/);
 
     const cala = await reportGet(request("http://localhost/api/admin/report?format=cala", { cookie: adminCookie }));
-    assert.equal(cala.status, 200);
+    assert.equal(cala.status, 200, await cala.clone().text());
     const calaJson = await cala.json();
-    assert.equal(calaJson.event.slug, "megathon-2026");
+    assert.equal(calaJson.event.slug, "megathon");
     assert.ok(Array.isArray(calaJson.contextPacks));
     assert.match(calaJson.contextPacks[0].operatorPrompt, /Cala context/);
 
     const pixverse = await reportGet(request("http://localhost/api/admin/report?format=pixverse", { cookie: adminCookie }));
     assert.equal(pixverse.status, 200);
     const pixverseJson = await pixverse.json();
-    assert.equal(pixverseJson.event.slug, "megathon-2026");
+    assert.equal(pixverseJson.event.slug, "megathon");
     assert.ok(Array.isArray(pixverseJson.promoBriefs));
     assert.match(pixverseJson.promoBriefs[0].prompt, /vota\.wtf/);
+
+    const missing = await reportGet(request("http://localhost/api/admin/report?eventSlug=missing-room", { cookie: adminCookie }));
+    assert.equal(missing.status, 404);
+    assert.match((await missing.json()).error, /Event not found/);
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;
@@ -1380,7 +2407,7 @@ test("admin readiness API reports deploy proof status without secret values", as
     });
     writeStore(createSeedStore());
     const response = await readinessGet(request("http://localhost/api/admin/readiness", { cookie: await adminCookieHeader() }));
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 200, await response.clone().text());
     const report = await response.json();
     assert.equal(report.ready, true);
     assert.equal(report.counts.fail, 0);

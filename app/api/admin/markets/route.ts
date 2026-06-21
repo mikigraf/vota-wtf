@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { createMarketData, readDataStore } from "@/lib/data";
-import { adminActionError, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
+import { adminActionError, badRequest, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
 import { assertRequestSize, MAX_MARKET_FORM_BYTES, saveMarketImageFile } from "@/lib/uploads";
 
 async function uploadedImageUrl(form: FormData, name: string, prefix: string) {
@@ -14,10 +14,16 @@ export async function GET(request: NextRequest) {
   const unauthorized = await requireAdminRequest(request);
   if (unauthorized) return unauthorized;
   const store = await readDataStore();
+  const eventSlug = request.nextUrl.searchParams.get("eventSlug") || DEFAULT_EVENT_SLUG;
+  const event = store.events.find((item) => item.slug === eventSlug);
+  if (!event) return badRequest("Event not found.", 404);
+  const markets = store.markets.filter((market) => market.eventId === event.id);
+  const marketIds = new Set(markets.map((market) => market.id));
   return json({
-    markets: store.markets,
-    outcomes: store.outcomes,
-    aggregates: store.marketAggregates
+    event,
+    markets,
+    outcomes: store.outcomes.filter((outcome) => marketIds.has(outcome.marketId)),
+    aggregates: store.marketAggregates.filter((aggregate) => marketIds.has(aggregate.marketId))
   });
 }
 

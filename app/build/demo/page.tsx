@@ -3,6 +3,8 @@ import { DEFAULT_EVENT_SLUG, LIVESTREAM_DEMO_EVENT_SLUG } from "@/lib/constants"
 
 export const dynamic = "force-dynamic";
 
+const DEFAULT_DEMO_MARKET_ID = "00000000-0000-4000-8000-000000001001";
+
 const steps = [
   {
     title: "Open the preloaded livestream event",
@@ -21,28 +23,28 @@ const steps = [
   },
   {
     title: "Open the stage screen",
-    detail: "Put `/stage` on the projector in Join QR mode before participants arrive.",
+    detail: `Put /stage/${DEFAULT_EVENT_SLUG} on the projector in Join QR mode before participants arrive.`,
     href: `/stage/${DEFAULT_EVENT_SLUG}`
   },
   {
     title: "Join from a phone",
-    detail: "Scan the QR, choose nickname, role, and either camera avatar or generated avatar.",
+    detail: "Scan the QR, enter a unique stage name and email, then enter the arena.",
     href: `/join/${DEFAULT_EVENT_SLUG}`
   },
   {
     title: "Place the first prediction",
     detail: "Use the fair-launch 100 MBucks prediction and confirm the stage advances into live mode.",
-    href: `/m/00000000-0000-4000-8000-000000000101`
+    href: `/m/${DEFAULT_DEMO_MARKET_ID}`
   },
   {
     title: "Add or switch",
     detail: "Wait for cooldown, then test an allowed add or switch and verify the current prediction receipt state.",
-    href: `/m/00000000-0000-4000-8000-000000000101`
+    href: `/m/${DEFAULT_DEMO_MARKET_ID}`
   },
   {
     title: "Try Whale Guard",
     detail: "Attempt an oversized custom amount and confirm the API returns the current max allowed amount.",
-    href: `/m/00000000-0000-4000-8000-000000000101`
+    href: `/m/${DEFAULT_DEMO_MARKET_ID}`
   },
   {
     title: "Run a test checkout",
@@ -52,26 +54,26 @@ const steps = [
   {
     title: "Review admin metrics",
     detail: "Check participants, predictions, virtual 2% provision, scan conversion, checkout totals, and audit state.",
-    href: "/admin"
+    href: `/admin?eventSlug=${DEFAULT_EVENT_SLUG}`
   },
   {
     title: "Moderate a participant",
     detail: "Rename, hide avatar, ban, or unban a test participant and verify the audit log records it.",
-    href: "/admin/participants"
+    href: `/admin/participants?eventSlug=${DEFAULT_EVENT_SLUG}`
   },
   {
     title: "Lock the market",
     detail: "Use the market lifecycle controls to lock the market before judging starts.",
-    href: "/admin/events/megathon-2026"
+    href: `/admin/events/${DEFAULT_EVENT_SLUG}`
   },
   {
     title: "Resolve and score",
     detail: "Choose the winning outcome, resolve the market, and confirm Oracle Score and Top Oracles update.",
-    href: "/admin/events/megathon-2026"
+    href: `/admin/events/${DEFAULT_EVENT_SLUG}`
   },
   {
     title: "Show the reveal",
-    detail: "Switch to resolution mode and verify the chosen outcome, crowd rank, role calls, and Top Oracles on stage.",
+    detail: "Switch to resolution mode and verify the chosen outcome, crowd rank, and Top Oracles on stage.",
     href: `/stage/${DEFAULT_EVENT_SLUG}`
   },
   {

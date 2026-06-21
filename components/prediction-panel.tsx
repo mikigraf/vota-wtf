@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import { SAFE_COPY } from "@/lib/constants";
 import { cn, mbucks, pct } from "@/lib/utils";
 import type { PredictionPreview, PublicMarketState, UserMarketState } from "@/lib/types";
 import { CheckoutButton } from "@/components/checkout-button";
 
 const chartColors = ["#FF5A1F", "#6E6E68", "#18C97B", "#F0C000", "#1f9bd1", "#6b55d7", "#FF5A5A", "#3a3a3c"];
+type InputChangeEvent = { currentTarget: HTMLInputElement };
 
 function percentagePoints(value: number) {
   const rounded = (value * 100).toFixed(1);
@@ -110,20 +113,23 @@ export function PredictionPanel({
   const showMobileLockedPosition = hasOpenPosition && !showMobileAdjustPosition;
   const amountIsValid = Number.isFinite(amountValue) && Number.isInteger(amountValue) && amountValue >= 0 && (isSwitch || amountValue > 0);
   const postCooldownAllowedAdd = selectedAllowed?.postCooldownAllowedAdd ?? selectedAllowed?.allowedAdd ?? 0;
+  const fairLaunchAmountInvalid = Boolean(selectedAllowed?.fairLaunch && amountIsValid && amountValue !== selectedAllowed.minInitial);
   const amountExceedsAllowed = Boolean(selectedAllowed && amountIsValid && amountValue > selectedAllowed.allowedAdd);
   const amountExceedsPostCooldown = Boolean(selectedAllowed && amountIsValid && amountValue > postCooldownAllowedAdd);
   const previewBlocksSubmit = Boolean(preview?.blocked);
-  const guardBlocksSubmit = Boolean(!selectedAllowed || !amountIsValid || amountExceedsAllowed || amountExceedsPostCooldown || previewBlocksSubmit || emergencyPaused);
+  const guardBlocksSubmit = Boolean(!selectedAllowed || !amountIsValid || fairLaunchAmountInvalid || amountExceedsAllowed || amountExceedsPostCooldown || previewBlocksSubmit || emergencyPaused);
   const guardMessage = !selectedAllowed
     ? "Choose an outcome to see the current Whale Guard limit."
     : emergencyPaused
       ? "Predictions are paused by the organizer. Your wallet and open markets stay intact."
     : !amountIsValid
       ? "Choose a whole MegaBuck amount."
-      : preview?.blocked
-        ? preview.reason
       : fairLaunchNeedsTopUp
         ? `First prediction is ${mbucks(selectedAllowed?.minInitial || 100)}. Add MBucks to enter this market.`
+      : fairLaunchAmountInvalid
+        ? `Fair launch: first prediction is exactly ${mbucks(selectedAllowed?.minInitial || 100)}.`
+      : preview?.blocked
+        ? preview.reason
       : isZeroMegaBuckSwitch && selectedAllowed.allowedAdd <= 0 && preview?.blocked
         ? "This market cannot absorb that switch yet."
       : selectedAllowed.cooldownRemainingSeconds > 0 && amountExceedsPostCooldown
@@ -134,13 +140,15 @@ export function PredictionPanel({
         ? preview?.reason || "This exceeds the current Whale Guard limit."
         : selectedAllowed.reason;
   const mobileGuardMessage =
-    emergencyPaused || preview?.blocked || amountExceedsAllowed || amountExceedsPostCooldown || !amountIsValid
+    emergencyPaused || preview?.blocked || fairLaunchNeedsTopUp || fairLaunchAmountInvalid || amountExceedsAllowed || amountExceedsPostCooldown || !amountIsValid
       ? guardMessage
       : selectedAllowed?.cooldownRemainingSeconds && selectedAllowed.cooldownRemainingSeconds > 0
         ? `${selectedAllowed.cooldownRemainingSeconds}s cooldown.`
         : "";
   const quickLimit = fairLaunchNeedsTopUp
-    ? 0
+    ? selectedAllowed?.minInitial || 0
+    : selectedAllowed?.fairLaunch
+      ? selectedAllowed.minInitial
     : selectedAllowed?.cooldownRemainingSeconds
       ? selectedAllowed.allowedAdd
       : Math.max(selectedAllowed?.allowedAdd || 0, postCooldownAllowedAdd);
@@ -148,8 +156,6 @@ export function PredictionPanel({
     new Set([100, 150, 250, quickLimit].filter((value) => Number.isFinite(value) && value > 0 && value <= quickLimit))
   );
   const walletShortfall = Boolean(fairLaunchNeedsTopUp || (user.wallet && amountIsValid && user.wallet.balanceCredits < amountValue));
-  const guardLimited = Boolean(selectedAllowed && selectedAllowed.allowedAdd <= 0 && !walletShortfall);
-  const showMobileSupportControls = Boolean(walletShortfall || guardLimited);
   const ticketKicker = market.status === "resolved" ? "Result" : marketClosed ? "Closed" : "Prediction";
   const ticketTitle =
     market.status === "resolved"
@@ -163,6 +169,8 @@ export function PredictionPanel({
       ? "Organizer pause is on."
       : market.blindLaunch.active
         ? `${market.blindLaunch.predictedCount} in. Hidden for ${market.blindLaunch.remainingPredictions} more.`
+      : fairLaunchNeedsTopUp || fairLaunchAmountInvalid
+        ? guardMessage
       : preview?.blocked
         ? preview.reason
           : preview
@@ -187,7 +195,7 @@ export function PredictionPanel({
               : `Submit ${mbucks(Number.isFinite(amountValue) ? amountValue : 0)}`
           : `Market ${market.status}`;
 
-  async function submit(event: React.FormEvent) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setMessage("");
@@ -215,6 +223,95 @@ export function PredictionPanel({
       setBusy(false);
     }
   }
+
+  const mobileActionControls = marketClosed ? null : (
+    <div className="sm:hidden" data-testid="mobile-prediction-action-cluster">
+      {showMobileLockedPosition ? (
+        <div className="mt-2 rounded-xl bg-mint/10 p-2.5">
+          <div className="flex items-center justify-between gap-2 text-sm font-black">
+            <span className="min-w-0 truncate">Current: {user.position?.outcomeLabel}</span>
+            <span className="font-mono-vota shrink-0 text-xs">{mbucks(user.position?.rawCredits || 0)}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowMobileAdjustPosition(true)}
+            className="focus-ring mt-2 min-h-11 w-full rounded-full bg-ink px-4 text-sm font-black text-white"
+          >
+            Add or switch
+          </button>
+        </div>
+      ) : null}
+      {selectedAllowed && quickAmounts.length > 0 && !showMobileLockedPosition ? (
+        <div className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(56px,1fr))] gap-1.5">
+          {quickAmounts.map((quick) => (
+            <button
+              key={quick}
+              type="button"
+              onClick={() => setAmount(String(quick))}
+              className={cn(
+                "focus-ring min-h-11 rounded-xl border-[1.5px] text-xs font-bold hover:border-ink hover:bg-soft",
+                Number(amount) === quick ? "border-ink bg-ink text-white" : "border-line bg-white text-ink"
+              )}
+            >
+              {quick}
+            </button>
+          ))}
+          <button
+            type="button"
+            onClick={() => setShowMobileCustom((value) => !value)}
+            className="focus-ring min-h-11 rounded-xl border-[1.5px] border-line bg-white text-xs font-bold text-ink hover:border-ink hover:bg-soft"
+          >
+            Edit
+          </button>
+        </div>
+      ) : null}
+      <div className={cn("mt-2 rounded-xl border border-line p-2", showMobileCustom && !showMobileLockedPosition ? "block" : "hidden")}>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-extrabold">Custom amount</span>
+          <button type="button" onClick={() => setShowMobileCustom(false)} className="focus-ring rounded-full px-2 py-1 text-xs font-bold text-muted">
+            Hide
+          </button>
+        </div>
+        <label className="mt-3 grid gap-2 text-sm font-extrabold">
+          MegaBucks
+          <input
+            data-testid="mobile-custom-amount"
+            className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
+            type="number"
+            min={selectedAllowed?.fairLaunch ? selectedAllowed.minInitial : 0}
+            max={selectedAllowed?.fairLaunch ? selectedAllowed.minInitial : undefined}
+            step="1"
+            value={amount}
+            onChange={(event: InputChangeEvent) => setAmount(event.currentTarget.value)}
+          />
+        </label>
+      </div>
+      <div className={cn("mt-2 rounded-xl border border-line bg-white p-2", walletShortfall || fairLaunchNeedsTopUp ? "block" : "hidden")}>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="font-mono-vota text-[10px] font-bold uppercase text-faded">
+            Wallet {user.wallet ? mbucks(user.wallet.balanceCredits) : "Join first"}
+          </span>
+          <span className="font-mono-vota text-[10px] font-bold uppercase text-faded">
+            {selectedAllowed ? `Need ${mbucks(selectedAllowed.minInitial)}` : market.status}
+          </span>
+        </div>
+        <CheckoutButton
+          returnTo={`/m/${market.id}`}
+          disabled={emergencyPaused}
+          disabledReason="Organizer pause is on. MegaBuck top-ups reopen soon."
+        />
+      </div>
+      {!showMobileLockedPosition && !walletShortfall ? (
+        <button
+          data-testid="mobile-prediction-submit"
+          className="focus-ring sticky bottom-2 z-20 mt-2 min-h-12 w-full rounded-full bg-ember px-4 text-sm font-black text-ink shadow-panel disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={busy || market.status !== "open" || !outcomeId || !user.participant || guardBlocksSubmit}
+        >
+          {submitLabel}
+        </button>
+      ) : null}
+    </div>
+  );
 
   return (
     <div className="grid gap-2 lg:grid-cols-[minmax(0,1fr)_380px] lg:gap-5" data-testid="prediction-panel">
@@ -277,7 +374,7 @@ export function PredictionPanel({
       </section>
       <form onSubmit={submit} className="order-1 h-fit rounded-xl border border-ink bg-white p-2 shadow-panel sm:order-2 sm:rounded-2xl sm:border-line sm:p-4 lg:sticky lg:top-5 lg:p-5">
         <div className="font-mono-vota text-[10px] font-bold uppercase text-ember sm:text-xs">{ticketKicker}</div>
-        <h2 className={cn("mt-1 text-lg font-extrabold sm:mt-2 sm:text-xl", marketClosed ? "block" : "hidden sm:block")}>{ticketTitle}</h2>
+        <h2 className="mt-1 line-clamp-2 text-lg font-extrabold leading-tight sm:mt-2 sm:text-xl">{ticketTitle}</h2>
         <p className={cn("mt-2 hidden text-sm font-semibold leading-5 text-muted sm:block", marketClosed && "sm:hidden")}>
           Commit MegaBucks before the result is obvious. Correct calls settle MegaBucks and earn Oracle Score after resolution.
         </p>
@@ -326,6 +423,7 @@ export function PredictionPanel({
             </button>
           </div>
         ) : null}
+        {mobileActionControls}
         {emergencyPaused ? (
           <div className="mt-3 hidden rounded-xl bg-danger/10 p-3 text-sm font-black text-danger sm:mt-4 sm:block">
             Organizer pause is on. Predictions and checkout actions are temporarily limited.
@@ -411,7 +509,7 @@ export function PredictionPanel({
           ) : null}
         </div>
         {selectedAllowed && quickAmounts.length > 0 ? (
-          <div className={cn("mt-2 grid-cols-[repeat(auto-fit,minmax(56px,1fr))] gap-1.5 sm:mt-4 sm:grid sm:grid-cols-[repeat(auto-fit,minmax(72px,1fr))] sm:gap-2", showMobileLockedPosition ? "hidden sm:grid" : "grid")}>
+          <div className="mt-4 hidden grid-cols-[repeat(auto-fit,minmax(72px,1fr))] gap-2 sm:grid">
             {quickAmounts.map((quick) => (
               <button
                 key={quick}
@@ -429,72 +527,37 @@ export function PredictionPanel({
             <button
               type="button"
               onClick={() => setShowMobileCustom((value) => !value)}
-              className="focus-ring min-h-11 rounded-xl border-[1.5px] border-line bg-white text-xs font-bold text-ink hover:border-ink hover:bg-soft sm:hidden"
+              className="focus-ring hidden min-h-11 rounded-xl border-[1.5px] border-line bg-white text-xs font-bold text-ink hover:border-ink hover:bg-soft"
             >
               Edit
             </button>
           </div>
         ) : null}
-        <div className={cn("mt-2 rounded-xl border border-line p-2 sm:hidden", showMobileCustom ? "block" : "hidden")}>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-extrabold">Custom amount</span>
-            <button type="button" onClick={() => setShowMobileCustom(false)} className="focus-ring rounded-full px-2 py-1 text-xs font-bold text-muted">
-              Hide
-            </button>
-          </div>
-          <label className="mt-3 grid gap-2 text-sm font-extrabold">
-            MegaBucks
-            <input
-              data-testid="mobile-custom-amount"
-              className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
-              type="number"
-              min="0"
-              step="1"
-              value={amount}
-              onChange={(event: any) => setAmount(event.target.value)}
-            />
-          </label>
-        </div>
         <label className="mt-3 hidden gap-2 text-sm font-extrabold sm:grid">
           Custom MegaBucks
           <input
             data-testid="custom-amount"
             className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
             type="number"
-            min="0"
+            min={selectedAllowed?.fairLaunch ? selectedAllowed.minInitial : 0}
+            max={selectedAllowed?.fairLaunch ? selectedAllowed.minInitial : undefined}
             step="1"
             value={amount}
-            onChange={(event: any) => setAmount(event.target.value)}
+            onChange={(event: InputChangeEvent) => setAmount(event.currentTarget.value)}
           />
         </label>
         <button
           type="button"
-          onClick={() => setAmount(String(selectedAllowed?.allowedAdd || 0))}
+          onClick={() => setAmount(String(selectedAllowed?.fairLaunch ? selectedAllowed.minInitial : selectedAllowed?.allowedAdd || 0))}
           disabled={!selectedAllowed || selectedAllowed.allowedAdd <= 0}
           className="focus-ring mt-3 hidden min-h-11 w-full rounded-xl border-[1.5px] border-line text-sm font-bold hover:border-ink hover:bg-soft sm:block"
         >
           Max allowed now
         </button>
-        {showMobileLockedPosition ? (
-          <div className="mt-2 rounded-xl bg-mint/10 p-2.5 sm:hidden">
-            <div className="flex items-center justify-between gap-2 text-sm font-black">
-              <span className="min-w-0 truncate">Current: {user.position?.outcomeLabel}</span>
-              <span className="font-mono-vota shrink-0 text-xs">{mbucks(user.position?.rawCredits || 0)}</span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setShowMobileAdjustPosition(true)}
-              className="focus-ring mt-2 min-h-11 w-full rounded-full bg-ink px-4 text-sm font-black text-white"
-            >
-              Add or switch
-            </button>
-          </div>
-        ) : null}
         <button
           data-testid="prediction-submit"
           className={cn(
-            "focus-ring sticky bottom-2 z-20 mt-2 min-h-12 w-full rounded-full bg-ember px-4 text-sm font-black text-ink shadow-panel disabled:cursor-not-allowed disabled:opacity-60 sm:static sm:mt-4 sm:bg-ink sm:text-white sm:shadow-none",
-            showMobileLockedPosition && "hidden sm:block"
+            "focus-ring hidden min-h-12 w-full rounded-full px-4 text-sm font-black disabled:cursor-not-allowed disabled:opacity-60 sm:static sm:mt-4 sm:block sm:bg-ink sm:text-white sm:shadow-none"
           )}
           disabled={busy || market.status !== "open" || !outcomeId || !user.participant || guardBlocksSubmit}
         >
@@ -533,49 +596,8 @@ export function PredictionPanel({
             </a>
           ) : null}
         </div>
-        <div className="mt-2 rounded-xl border border-line bg-white p-2 sm:hidden">
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <span className="font-mono-vota text-[10px] font-bold uppercase text-faded">
-              Wallet {user.wallet ? mbucks(user.wallet.balanceCredits) : "Join first"}
-            </span>
-            <span className="font-mono-vota text-[10px] font-bold uppercase text-faded">
-              {selectedAllowed ? `Cap ${mbucks(selectedAllowed.allowedAdd)}` : market.status}
-            </span>
-          </div>
-          <CheckoutButton
-            returnTo={`/m/${market.id}`}
-            disabled={emergencyPaused}
-            disabledReason="Organizer pause is on. MegaBuck top-ups reopen soon."
-          />
-        </div>
-        <div className={cn("mt-2 rounded-xl border border-line p-2 sm:hidden", showMobileSupportControls ? "block" : "hidden")}>
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-extrabold">{fairLaunchNeedsTopUp ? "Add MBucks to enter" : walletShortfall ? "Add MBucks or lower amount" : guardLimited ? "Limit reached" : "Amount help"}</span>
-          </div>
-          <label className="mt-3 grid gap-2 text-sm font-extrabold">
-            MegaBucks
-            <input
-              data-testid="mobile-support-amount"
-              className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
-              type="number"
-              min="0"
-              step="1"
-              value={amount}
-              onChange={(event: any) => setAmount(event.target.value)}
-            />
-          </label>
-          {guardLimited ? <p className="mt-3 rounded-xl bg-paper p-3 text-xs font-bold text-muted">{guardMessage}</p> : null}
-          <button
-            type="button"
-            onClick={() => setAmount(String(selectedAllowed?.allowedAdd || 0))}
-            disabled={!selectedAllowed || selectedAllowed.allowedAdd <= 0}
-            className="focus-ring mt-3 min-h-11 w-full rounded-xl border-[1.5px] border-line text-sm font-bold hover:border-ink hover:bg-soft"
-          >
-            Max allowed now
-          </button>
-        </div>
         <div className="mt-3 hidden sm:block">
-          <p className="mb-2 text-sm font-semibold text-muted">No real charge in MEGATHON test mode. MegaBucks stay inside vota.wtf.</p>
+          <p className="mb-2 text-sm font-semibold text-muted">{SAFE_COPY.checkout}</p>
           <CheckoutButton
             returnTo={`/m/${market.id}`}
             disabled={emergencyPaused}
@@ -597,6 +619,7 @@ export function PredictionPanel({
 
 function MobileMarketMomentum({ market, preview }: { market: PublicMarketState; preview?: PredictionPreview }) {
   const orderedOutcomes = [...market.outcomes].sort((a, b) => b.stageSignal - a.stageSignal || b.peopleCount - a.peopleCount).slice(0, 4);
+  const points = market.oddsHistory.slice(-24);
   return (
     <section className="rounded-xl border border-line bg-white p-2.5 shadow-panel">
       <div className="flex items-center justify-between gap-2">
@@ -611,6 +634,7 @@ function MobileMarketMomentum({ market, preview }: { market: PublicMarketState; 
         </p>
       ) : (
         <div className="mt-2 grid gap-1.5">
+          {points.length >= 2 ? <MobileOddsSparkline market={market} points={points} /> : null}
           {orderedOutcomes.map((outcome, index) => (
             <div key={outcome.id} className="grid gap-1">
               <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 text-xs font-black">
@@ -634,6 +658,67 @@ function MobileMarketMomentum({ market, preview }: { market: PublicMarketState; 
         </div>
       )}
     </section>
+  );
+}
+
+function MobileOddsSparkline({
+  market,
+  points
+}: {
+  market: PublicMarketState;
+  points: PublicMarketState["oddsHistory"];
+}) {
+  const width = 320;
+  const height = 94;
+  const padX = 10;
+  const padY = 10;
+  const minTime = Math.min(...points.map((point) => new Date(point.at).getTime()));
+  const maxTime = Math.max(...points.map((point) => new Date(point.at).getTime()));
+  const span = Math.max(1, maxTime - minTime);
+  const pathForOutcome = (outcomeId: string) =>
+    points
+      .map((point, index) => {
+        const time = new Date(point.at).getTime();
+        const x =
+          maxTime === minTime
+            ? padX + (index / Math.max(1, points.length - 1)) * (width - padX * 2)
+            : padX + ((time - minTime) / span) * (width - padX * 2);
+        const value = point.outcomeSignals[outcomeId]?.stageSignal || 0;
+        const y = height - padY - value * (height - padY * 2);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      })
+      .join(" ");
+  return (
+    <svg
+      className="h-24 w-full rounded-lg bg-ink"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="Mobile odds over time"
+    >
+      {[0.25, 0.5, 0.75].map((line) => (
+        <line
+          key={line}
+          x1={padX}
+          x2={width - padX}
+          y1={height - padY - line * (height - padY * 2)}
+          y2={height - padY - line * (height - padY * 2)}
+          stroke="#ffffff"
+          strokeOpacity="0.10"
+          strokeWidth="1"
+        />
+      ))}
+      {market.outcomes.slice(0, 6).map((outcome, index) => (
+        <polyline
+          key={outcome.id}
+          fill="none"
+          points={pathForOutcome(outcome.id)}
+          stroke={chartColors[index % chartColors.length]}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="4"
+        />
+      ))}
+    </svg>
   );
 }
 

@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { createMcpWriteTokenData } from "@/lib/data";
 import { badRequest, clientIpFromRequest, json, readJsonObject, requireAdminRequest } from "@/lib/http";
 
@@ -13,9 +14,11 @@ export async function POST(request: NextRequest) {
   if (unauthorized) return unauthorized;
   try {
     const body = await readBody(request);
+    const eventSlug = String(body.eventSlug || DEFAULT_EVENT_SLUG);
     const participantId = String(body.participantId || "").trim() || undefined;
     const expiresInHours = Number(body.expiresInHours || 72);
     const result = await createMcpWriteTokenData({
+      eventSlug,
       participantId,
       expiresInHours: Number.isFinite(expiresInHours) ? expiresInHours : 72,
       auditIp: clientIpFromRequest(request)
@@ -24,6 +27,7 @@ export async function POST(request: NextRequest) {
       return json(result);
     }
     const redirectTo = new URL("/admin/agents", request.url);
+    redirectTo.searchParams.set("eventSlug", eventSlug);
     redirectTo.searchParams.set("mcpTokenCreated", "1");
     return Response.redirect(redirectTo, 303);
   } catch (error) {

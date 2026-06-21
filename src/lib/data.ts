@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { getParticipantSessionIdFromRequest, verifyBearerToken } from "./auth";
 import { DEFAULT_EVENT_SLUG, TEST_CHECKOUT_CREDITS, TEST_CHECKOUT_EUR } from "./constants";
 import {
-  calculateAllowedStake,
+  createEvent,
   chooseHouseAgentMove,
   createMarket,
   createParticipantSession,
@@ -50,18 +50,25 @@ import type {
   PredictionAction,
   PublicEventState,
   Purchase,
-  Role,
   Store,
   StageMode,
   UserMarketState,
   PredictionPreview,
   Wallet
 } from "./types";
-import { makeId, normalizeEmail, normalizeNickname, normalizeRole, nowIso } from "./utils";
+import { safeCheckoutReturnPath, safeParticipantNextPath } from "./safe-paths";
+import { cleanNicknameInput, makeId, normalizeEmail, normalizeNickname, normalizeRole, nowIso } from "./utils";
 
 type Row = Record<string, any>;
 type PaymentStatus = "paid" | "failed" | "canceled";
 type ParticipantModerationAction = "rename" | "hide_avatar" | "show_avatar" | "ban" | "unban";
+type EventWriteInput = {
+  name: string;
+  slug?: string;
+  status?: EventRecord["status"];
+  starterCredits?: number;
+  auditIp?: string;
+};
 type MarketOutcomeInput = { id?: string; label: string; imageUrl?: string; icon?: string };
 type MarketWriteInput = {
   eventSlug: string;
@@ -337,7 +344,7 @@ function eventFromRow(row: Row): EventRecord {
     status: row.status,
     starterCredits: row.starter_credits,
     emergencyPaused: row.emergency_paused,
-    stageMode: row.stage_mode,
+    stageMode: row.stage_mode === "role_battle" ? "live" : row.stage_mode,
     featuredMarketId: row.featured_market_id || undefined,
     createdAt: row.created_at
   };
@@ -693,6 +700,7 @@ function purchaseFromRow(row: Row): Purchase {
     credits: row.credits,
     molliePaymentId: row.mollie_payment_id || undefined,
     checkoutUrl: row.checkout_url || undefined,
+    returnTo: row.return_to || undefined,
     createdAt: row.created_at,
     paidAt: row.paid_at || undefined,
     creditedAt: row.credited_at || undefined
@@ -709,6 +717,7 @@ function purchaseToRow(purchase: Purchase): Row {
     credits: purchase.credits,
     mollie_payment_id: purchase.molliePaymentId || null,
     checkout_url: purchase.checkoutUrl || null,
+    return_to: purchase.returnTo || null,
     created_at: purchase.createdAt,
     paid_at: purchase.paidAt || null,
     credited_at: purchase.creditedAt || null
@@ -841,17 +850,30 @@ async function ensureSupabaseSeeded() {
   seedPromise ||= (async () => {
     const seed = createSeedStore();
     await upsertRows("events", seed.events.map((event) => eventToRow(event, false)), "slug", true);
-    await upsertRows("markets", seed.markets.map(marketToRow), "id", true);
+    const eventRows = await selectRows("events", "select=id,slug");
+    const eventIdBySlug = new Map(eventRows.map((row) => [String(row.slug), String(row.id)]));
+    const seedEventById = new Map(seed.events.map((event) => [event.id, event]));
+    const remapEventId = (eventId: string) => {
+      const seedEvent = seedEventById.get(eventId);
+      return seedEvent ? eventIdBySlug.get(seedEvent.slug) || eventId : eventId;
+    };
+    const seededMarkets = seed.markets.map((market) => ({ ...market, eventId: remapEventId(market.eventId) }));
+    const seededParticipants = seed.participants.map((participant) => ({ ...participant, eventId: remapEventId(participant.eventId) }));
+    const seededSessions = seed.participantSessions.map((session) => ({ ...session, eventId: remapEventId(session.eventId) }));
+    const seededAgents = seed.agentProfiles.map((agent) => ({ ...agent, eventId: remapEventId(agent.eventId) }));
+    await upsertRows("markets", seededMarkets.map(marketToRow), "id", true);
     await upsertRows("outcomes", seed.outcomes.map(outcomeToRow), "id", true);
-    await upsertRows("participants", seed.participants.map(participantToRow), "id", true);
+    await upsertRows("participants", seededParticipants.map(participantToRow), "id", true);
+    await upsertRows("participant_sessions", seededSessions.map(sessionToRow), "id", true);
     await upsertRows("wallets", seed.wallets.map(walletToRow), "participant_id", true);
     await upsertRows("positions", seed.positions.map(positionToRow), "id", true);
     await upsertRows("prediction_actions", seed.predictionActions.map(predictionActionToRow), "id", true);
     await upsertRows("ledger_entries", seed.ledgerEntries.map(ledgerEntryToRow), "id", true);
     await upsertRows("market_aggregates", seed.marketAggregates.map(aggregateToRow), "market_id", true);
+    await upsertRows("agent_profiles", seededAgents.map(agentProfileToRow), "id", true);
     for (const event of seed.events) {
       if (event.featuredMarketId) {
-        await patchRows("events", `id=eq.${event.id}&featured_market_id=is.null`, { featured_market_id: event.featuredMarketId });
+        await patchRows("events", `slug=eq.${encodeURIComponent(event.slug)}&featured_market_id=is.null`, { featured_market_id: event.featuredMarketId });
       }
     }
   })();
@@ -933,9 +955,9 @@ async function readSupabasePublicState(eventSlug: string): Promise<PublicEventSt
 }
 
 function emptyLeaderboardGroups(overall: LeaderboardRow[] = []): LeaderboardGroups {
+  const visibleOverall = overall.filter((row) => row.participantType !== "platform");
   return {
-    overall,
-    byRole: { builder: [], sponsor: [], investor: [], other: [] },
+    overall: visibleOverall,
     humans: [],
     agents: [],
     earlyCallers: [],
@@ -944,19 +966,12 @@ function emptyLeaderboardGroups(overall: LeaderboardRow[] = []): LeaderboardGrou
 }
 
 function leaderboardGroupsFromRows(overall: LeaderboardRow[]): LeaderboardGroups {
-  const scored = overall.filter((row) => row.oracleScore > 0);
-  const byRole = (["builder", "sponsor", "investor", "other"] as Role[]).reduce<LeaderboardGroups["byRole"]>(
-    (acc, role) => {
-      acc[role] = scored.filter((row) => row.role === role);
-      return acc;
-    },
-    { builder: [], sponsor: [], investor: [], other: [] }
-  );
+  const visibleOverall = overall.filter((row) => row.participantType !== "platform");
+  const scored = visibleOverall.filter((row) => row.oracleScore > 0);
   return {
-    ...emptyLeaderboardGroups(overall),
-    byRole,
+    ...emptyLeaderboardGroups(visibleOverall),
     humans: scored.filter((row) => row.participantType === "human"),
-    agents: scored.filter((row) => row.participantType !== "human"),
+    agents: scored.filter((row) => row.participantType !== "human" && row.participantType !== "platform"),
     earlyCallers: [...scored]
       .filter((row) => row.earlyScore > 0)
       .sort((a, b) => b.earlyScore - a.earlyScore || b.oracleScore - a.oracleScore || a.nickname.localeCompare(b.nickname)),
@@ -967,11 +982,14 @@ function leaderboardGroupsFromRows(overall: LeaderboardRow[]): LeaderboardGroups
 }
 
 function leaderboardRowFromRpcRow(row: Row): LeaderboardRow {
+  const participantType =
+    row.participant_type === "house_agent" || row.participant_type === "external_agent" || row.participant_type === "platform"
+      ? row.participant_type
+      : "human";
   return {
     id: String(row.id),
     nickname: String(row.nickname || "oracle"),
-    role: normalizeRole(String(row.role || "other")),
-    participantType: row.participant_type === "house_agent" || row.participant_type === "external_agent" ? row.participant_type : "human",
+    participantType,
     avatarUrl: row.avatar_url || undefined,
     oracleScore: Number(row.oracle_score || 0),
     predictions: Number(row.predictions || 0),
@@ -1039,13 +1057,20 @@ function scopedPublicMarketStore(source: Store, marketId: string, sessionId?: st
   };
 }
 
+function receiptMarketIds(source: Store, eventId: string, directAction?: PredictionAction) {
+  return directAction
+    ? [directAction.marketId]
+    : source.markets.filter((market) => market.eventId === eventId).map((market) => market.id);
+}
+
 function scopedReceiptStore(source: Store, receiptId: string): Store {
   const directAction = source.predictionActions.find((item) => item.id === receiptId);
-  if (!directAction) return emptyDataStore();
-  const participant = source.participants.find((item) => item.id === directAction.participantId);
+  const participant = directAction
+    ? source.participants.find((item) => item.id === directAction.participantId)
+    : source.participants.find((item) => item.id === receiptId);
   if (!participant) return emptyDataStore();
-  const marketIds = new Set([directAction.marketId]);
   const event = source.events.find((item) => item.id === participant.eventId);
+  const marketIds = new Set(receiptMarketIds(source, participant.eventId, directAction));
   return {
     ...emptyDataStore(),
     events: event ? [event] : [],
@@ -1057,6 +1082,10 @@ function scopedReceiptStore(source: Store, receiptId: string): Store {
       (action) => action.participantId === participant.id && marketIds.has(action.marketId)
     )
   };
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
 
 async function readSupabasePublicEventStore(eventSlug: string, sessionId?: string): Promise<Store> {
@@ -1156,6 +1185,21 @@ export async function readPublicMarketStoreData(marketId: string, sessionId?: st
   return readSupabasePublicMarketStore(marketId, sessionId);
 }
 
+export async function findMarketEventSlugData(marketId: string) {
+  if (!marketId) return undefined;
+  if (!useSupabaseStore()) {
+    const store = await readStore();
+    const market = store.markets.find((item) => item.id === marketId);
+    return store.events.find((event) => event.id === market?.eventId)?.slug;
+  }
+  if (!isUuid(marketId)) return undefined;
+  const rows = await selectRows(
+    "markets",
+    `select=event_id,events(slug)&id=eq.${encodeURIComponent(marketId)}&limit=1`
+  );
+  return rows[0]?.events?.slug ? String(rows[0].events.slug) : undefined;
+}
+
 export async function readUserMarketStateData(marketId: string, sessionId?: string): Promise<UserMarketState> {
   const store = await readPublicMarketStoreData(marketId, sessionId);
   const session = getSessionParticipant(store, sessionId);
@@ -1165,24 +1209,30 @@ export async function readUserMarketStateData(marketId: string, sessionId?: stri
 export async function readReceiptStoreData(receiptId: string): Promise<Store> {
   if (!receiptId) return emptyDataStore();
   if (!useSupabaseStore()) return scopedReceiptStore(await readStore(), receiptId);
+  if (!isUuid(receiptId)) return emptyDataStore();
 
   const directActionRows = await selectRows("prediction_actions", `select=*&id=eq.${encodeURIComponent(receiptId)}`);
   const directAction = directActionRows[0] ? predictionActionFromRow(directActionRows[0]) : undefined;
-  if (!directAction) return emptyDataStore();
-  const participantRows = await selectRows(
-    "participants",
-    `select=*&id=eq.${encodeURIComponent(directAction.participantId)}`
-  );
+  const participantId = directAction?.participantId || receiptId;
+  const participantRows = await selectRows("participants", `select=*&id=eq.${encodeURIComponent(participantId)}`);
   const participant = participantRows[0] ? participantFromRow(participantRows[0]) : undefined;
   if (!participant) return emptyDataStore();
 
-  const seedPositionRows = await selectRows(
-    "positions",
-    `select=*&participant_id=eq.${encodeURIComponent(participant.id)}&market_id=eq.${encodeURIComponent(directAction.marketId)}`
-  );
-  const marketIds = [directAction.marketId];
-  const [eventRows, marketRows, outcomeRows, actionRows] = await Promise.all([
-    selectRows("events", `select=*&id=eq.${encodeURIComponent(participant.eventId)}`),
+  const eventRows = await selectRows("events", `select=*&id=eq.${encodeURIComponent(participant.eventId)}`);
+  const event = eventRows[0] ? eventFromRow(eventRows[0]) : undefined;
+  if (!event) return emptyDataStore();
+  const marketIdRows = directAction
+    ? [{ id: directAction.marketId }]
+    : await selectRows("markets", `select=id&event_id=eq.${encodeURIComponent(event.id)}`);
+  const marketIds = marketIdRows.map((row) => String(row.id)).filter(Boolean);
+  const seedPositionRows =
+    marketIds.length > 0
+      ? await selectRows(
+          "positions",
+          `select=*&participant_id=eq.${encodeURIComponent(participant.id)}&market_id=in.(${marketIds.join(",")})`
+        )
+      : [];
+  const [marketRows, outcomeRows, actionRows] = await Promise.all([
     marketIds.length > 0 ? selectRows("markets", `select=*&id=in.(${marketIds.join(",")})`) : Promise.resolve([]),
     marketIds.length > 0 ? selectRows("outcomes", `select=*&market_id=in.(${marketIds.join(",")})`) : Promise.resolve([]),
     marketIds.length > 0
@@ -1194,7 +1244,7 @@ export async function readReceiptStoreData(receiptId: string): Promise<Store> {
   ]);
   return {
     ...emptyDataStore(),
-    events: eventRows.map(eventFromRow),
+    events: [event],
     participants: [participant],
     markets: marketRows.map(marketFromRow),
     outcomes: outcomeRows.map(outcomeFromRow),
@@ -1315,16 +1365,94 @@ export async function findNextOpenMarketData(eventId: string) {
   return markets.find((market) => market.id === event?.featuredMarketId) || markets[0];
 }
 
-export async function findReusablePendingPurchaseData(participantId: string) {
+export async function scopedParticipantNextPathData(value: unknown, eventSlug: string) {
+  const path = safeParticipantNextPath(value);
+  if (!path) return "";
+  let pathname = "";
+  try {
+    pathname = new URL(path, "https://vota.local").pathname;
+  } catch {
+    return "";
+  }
+
+  const eventPathMatch = pathname.match(/^\/(?:e|j|join)\/([^/]+)$/);
+  if (eventPathMatch) return decodeURIComponent(eventPathMatch[1] || "") === eventSlug ? path : "";
+
+  const marketMatch = pathname.match(/^\/m\/([^/]+)$/);
+  if (!marketMatch) return "";
+  const marketId = decodeURIComponent(marketMatch[1] || "");
+  if (!marketId) return "";
+
+  if (!useSupabaseStore()) {
+    const store = await readStore();
+    const event = store.events.find((item) => item.slug === eventSlug);
+    const market = store.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
+    return event && market?.eventId === event.id ? path : "";
+  }
+
+  if (!isUuid(marketId)) return "";
+  const eventRows = await selectRows("events", `select=id&slug=eq.${encodeURIComponent(eventSlug)}&limit=1`);
+  const eventId = eventRows[0]?.id as string | undefined;
+  if (!eventId) return "";
+  const marketRows = await selectRows(
+    "markets",
+    `select=id,event_id,status&id=eq.${encodeURIComponent(marketId)}&event_id=eq.${encodeURIComponent(eventId)}&status=not.in.(draft,voided)&limit=1`
+  );
+  return marketRows[0] ? path : "";
+}
+
+export async function scopedCheckoutReturnPathData(value: unknown, eventSlug: string) {
+  const fallback = `/e/${eventSlug}`;
+  const path = safeCheckoutReturnPath(value, eventSlug);
+  let pathname = "";
+  try {
+    pathname = new URL(path, "https://vota.local").pathname;
+  } catch {
+    return fallback;
+  }
+
+  const directEventMatch = pathname.match(/^\/(?:e|j|join)\/([^/]+)$/);
+  if (directEventMatch) {
+    return decodeURIComponent(directEventMatch[1] || "") === eventSlug ? path : fallback;
+  }
+
+  const marketMatch = pathname.match(/^\/m\/([^/]+)$/);
+  if (!marketMatch) return fallback;
+  const marketId = decodeURIComponent(marketMatch[1] || "");
+  if (!marketId) return fallback;
+
+  if (!useSupabaseStore()) {
+    const store = await readStore();
+    const event = store.events.find((item) => item.slug === eventSlug);
+    const market = store.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
+    return event && market?.eventId === event.id ? path : fallback;
+  }
+
+  const eventRows = await selectRows("events", `select=id&slug=eq.${encodeURIComponent(eventSlug)}&limit=1`);
+  const eventId = eventRows[0]?.id as string | undefined;
+  if (!eventId) return fallback;
+  const marketRows = await selectRows(
+    "markets",
+    `select=id,event_id,status&id=eq.${encodeURIComponent(marketId)}&event_id=eq.${encodeURIComponent(eventId)}&status=not.in.(draft,voided)&limit=1`
+  );
+  return marketRows[0] ? path : fallback;
+}
+
+export async function findReusablePendingPurchaseData(participantId: string, returnTo: string) {
   if (!participantId) return undefined;
   if (!useSupabaseStore()) {
     return [...(await readStore()).purchases]
       .reverse()
-      .find((purchase) => purchase.participantId === participantId && purchase.status === "pending" && purchase.checkoutUrl);
+      .find((purchase) =>
+        purchase.participantId === participantId &&
+        purchase.status === "pending" &&
+        purchase.checkoutUrl &&
+        purchase.returnTo === returnTo
+      );
   }
   const rows = await selectRows(
     "purchases",
-    `select=*&participant_id=eq.${encodeURIComponent(participantId)}&status=eq.pending&checkout_url=not.is.null&order=created_at.desc`
+    `select=*&participant_id=eq.${encodeURIComponent(participantId)}&status=eq.pending&checkout_url=not.is.null&return_to=eq.${encodeURIComponent(returnTo)}&order=created_at.desc`
   );
   return rows[0] ? purchaseFromRow(rows[0]) : undefined;
 }
@@ -1411,6 +1539,7 @@ export async function readinessContractData() {
       profileLockRpc: true,
       participantEmailColumn: true,
       participantUniqueNameIndex: true,
+      participantUniqueEmailIndex: true,
       poolSettlementRpc: true,
       voidMarketRpc: true,
       transitionMarketRpc: true,
@@ -1426,7 +1555,22 @@ export async function readinessContractData() {
       positionsSameEventTrigger: true,
       predictionActionsSameEventTrigger: true,
       stageFeatureNormalizeTrigger: true,
-      ledgerSettlementColumns: true
+      ledgerSettlementColumns: true,
+      repurposedSeedMarket: true,
+      neutralHouseAgentNames: true,
+      roleBattleStageModeRemoved: true,
+      megathonTestingmikiMarketsSeeded: true,
+      checkoutReturnPathScoped: true,
+      participantModerationRpc: true,
+      marketAggregatesPrivate: true,
+      marketAggregatesNotRealtime: true,
+      platformParticipantType: true,
+      platformProvisionLedgerType: true,
+      platformMainAccount: true,
+      platformProvisionSettlement: true,
+      positionsMarketSignalIndex: true,
+      predictionActionsMarketCreatedIndex: true,
+      participantSessionsParticipantActiveIndex: true
     };
   }
   return rpc<Row>("readiness_contract_tx", {});
@@ -1483,6 +1627,7 @@ export async function updateParticipantProfileData(
   participantId: string,
   input: { nickname: string; email?: string; role?: string; avatarUrl?: string }
 ) {
+  if (!cleanNicknameInput(input.nickname)) throw new Error("Use letters, numbers, spaces, dots, dashes, or underscores for your stage name.");
   if (!useSupabaseStore()) {
     return mutateDataStore((store) =>
       updateParticipantProfile(store, participantId, {
@@ -1551,6 +1696,10 @@ export async function createMarketData(input: MarketWriteInput) {
   return marketFromRow(result.market);
 }
 
+export async function createEventData(input: EventWriteInput) {
+  return mutateDataStore((store) => createEvent(store, input));
+}
+
 export async function updateMarketData(
   marketId: string,
   expectedUpdatedAt: string | undefined,
@@ -1612,15 +1761,32 @@ export async function updateMarketData(
 
 export async function moderateParticipantData(input: {
   participantId: string;
+  eventSlug: string;
   action: ParticipantModerationAction;
   nickname?: string;
   auditIp?: string;
 }) {
+  const eventSlug = input.eventSlug.trim();
+  if (!eventSlug) throw new Error("Event context is required.");
   if (!useSupabaseStore()) {
     return mutateStore((store) => {
       const participant = store.participants.find((item) => item.id === input.participantId);
       if (!participant) throw new Error("Participant not found.");
-      if (input.action === "rename") participant.nickname = normalizeNickname(input.nickname || participant.nickname);
+      const event = store.events.find((item) => item.slug === eventSlug);
+      if (!event || participant.eventId !== event.id) throw new Error("Participant does not belong to this event.");
+      if (input.action === "rename") {
+        const nickname = normalizeNickname(input.nickname || participant.nickname);
+        if (!nickname || nickname.toLowerCase() === "oracle") throw new Error("Enter a stage name before joining.");
+        const duplicate = store.participants.find(
+          (item) =>
+            item.id !== participant.id &&
+            item.eventId === participant.eventId &&
+            item.participantType === "human" &&
+            item.nickname.trim().toLowerCase() === nickname.toLowerCase()
+        );
+        if (duplicate) throw new Error("That stage name is already taken.");
+        participant.nickname = nickname;
+      }
       if (input.action === "hide_avatar") participant.isAvatarHidden = true;
       if (input.action === "show_avatar") participant.isAvatarHidden = false;
       if (input.action === "ban") participant.isBanned = true;
@@ -1640,42 +1806,20 @@ export async function moderateParticipantData(input: {
     });
   }
 
-  const store = await readSupabaseStore();
-  const participant = store.participants.find((item) => item.id === input.participantId);
-  if (!participant) throw new Error("Participant not found.");
-  const patch: Row = {};
-  if (input.action === "rename") patch.nickname = normalizeNickname(input.nickname || participant.nickname);
-  if (input.action === "hide_avatar") patch.is_avatar_hidden = true;
-  if (input.action === "show_avatar") patch.is_avatar_hidden = false;
-  if (input.action === "ban") patch.is_banned = true;
-  if (input.action === "unban") patch.is_banned = false;
-  const updated = await patchRowsReturning("participants", `id=eq.${encodeURIComponent(input.participantId)}`, patch);
-  const marketIds = new Set(
-    store.positions.filter((position) => position.participantId === participant.id).map((position) => position.marketId)
-  );
-  for (const marketId of marketIds) await rpc("recompute_market_aggregate", { p_market_id: marketId });
-  await upsertRows(
-    "admin_audit_logs",
-    [
-      auditLogToRow({
-        id: makeId("aud"),
-        action: `participant_${input.action}`,
-        entityType: "participant",
-        entityId: participant.id,
-        details: { nickname: patch.nickname || participant.nickname },
-        ip: input.auditIp,
-        createdAt: nowIso()
-      })
-    ],
-    "id"
-  );
-  return participantFromRow(updated[0]);
+  const result = await rpc<Row>("moderate_participant_tx", {
+    p_participant_id: input.participantId,
+    p_event_slug: eventSlug,
+    p_action: input.action,
+    p_nickname: input.nickname || null,
+    p_ip: input.auditIp || null
+  });
+  return participantFromRow(result.participant);
 }
 
 export async function placePredictionData(
   sessionId: string,
-  input: { participantId: string; marketId: string; outcomeId: string; amountCredits: number; requestId?: string }
-): Promise<ReturnType<typeof placePrediction> & { user: UserMarketState }> {
+  input: { participantId?: string; marketId: string; outcomeId: string; amountCredits: number; requestId?: string }
+): Promise<Omit<ReturnType<typeof placePrediction>, "allowed"> & { allowed?: ReturnType<typeof placePrediction>["allowed"]; user?: UserMarketState }> {
   if (!useSupabaseStore()) {
     return mutateStore((store) => {
       const session = getSessionParticipant(store, sessionId);
@@ -1701,23 +1845,12 @@ export async function placePredictionData(
     p_amount_credits: Math.floor(Number(input.amountCredits)),
     p_request_id: input.requestId?.trim().slice(0, 128) || null
   });
-  const store = await readPublicMarketStoreData(input.marketId, sessionId);
   const position = positionFromRow(result.position);
-  const user = userMarketState(store, {
-    participantId: position.participantId,
-    marketId: input.marketId
-  });
   return {
     position,
     action: predictionActionFromRow(result.action),
     aggregate: aggregateFromRow(result.aggregate),
-    wallet: walletFromRow(result.wallet),
-    allowed: calculateAllowedStake(store, {
-      participantId: position.participantId,
-      marketId: input.marketId,
-      outcomeId: input.outcomeId
-    }),
-    user
+    wallet: walletFromRow(result.wallet)
   };
 }
 
@@ -1850,7 +1983,7 @@ export async function updateStageControlsData(input: {
   if (!useSupabaseStore()) {
     return mutateStore((store) => {
       const item = getEventOrThrow(store, input.eventSlug);
-      const marketDisplayModes: StageMode[] = ["live", "role_battle", "humans_vs_agents"];
+      const marketDisplayModes: StageMode[] = ["live", "humans_vs_agents"];
       const needsActiveMarket = marketDisplayModes.includes(input.stageMode);
       const stageMarkets = store.markets.filter((candidate) =>
         candidate.eventId === item.id && candidate.status !== "draft" && candidate.status !== "voided" && candidate.showOnStage
@@ -1919,8 +2052,8 @@ export async function voidMarketData(marketId: string, auditIp?: string) {
   });
 }
 
-export async function createPurchaseData(participantId: string) {
-  if (!useSupabaseStore()) return mutateDataStore((store) => createPurchase(store, participantId));
+export async function createPurchaseData(participantId: string, returnTo?: string) {
+  if (!useSupabaseStore()) return mutateDataStore((store) => createPurchase(store, participantId, returnTo));
   const purchase: Purchase = {
     id: makeId("pur"),
     participantId,
@@ -1928,24 +2061,30 @@ export async function createPurchaseData(participantId: string) {
     amountEur: TEST_CHECKOUT_EUR,
     currency: "EUR",
     credits: TEST_CHECKOUT_CREDITS,
+    returnTo,
     createdAt: nowIso()
   };
   await upsertRows("purchases", [purchaseToRow(purchase)], "id");
   return purchase;
 }
 
-export async function createOrReusePendingPurchaseData(participantId: string) {
+export async function createOrReusePendingPurchaseData(participantId: string, returnTo: string) {
   if (!useSupabaseStore()) {
     return mutateDataStore((store) => {
       const existing = [...store.purchases]
         .reverse()
-        .find((purchase) => purchase.participantId === participantId && purchase.status === "pending");
-      return existing || createPurchase(store, participantId);
+        .find((purchase) => purchase.participantId === participantId && purchase.status === "pending" && purchase.returnTo === returnTo);
+      if (existing) return existing;
+      for (const stale of store.purchases.filter((purchase) => purchase.participantId === participantId && purchase.status === "pending")) {
+        stale.status = "canceled";
+      }
+      return createPurchase(store, participantId, returnTo);
     });
   }
   const result = await rpc<Row>("create_or_reuse_pending_purchase_tx", {
     p_participant_id: participantId,
-    p_purchase_id: makeId("pur")
+    p_purchase_id: makeId("pur"),
+    p_return_to: returnTo
   });
   return purchaseFromRow(result);
 }
@@ -2020,7 +2159,7 @@ export async function verifyMcpWriteTokenData(request: NextRequest, participantI
   return rows.some((row) => {
     const tokenParticipant = row.participant_id as string | null;
     const expiresAt = row.expires_at as string | null;
-    return (!tokenParticipant || tokenParticipant === participantId) && (!expiresAt || new Date(expiresAt).getTime() > now);
+    return Boolean(tokenParticipant) && tokenParticipant === participantId && (!expiresAt || new Date(expiresAt).getTime() > now);
   });
 }
 
@@ -2067,11 +2206,13 @@ export async function getMcpSessionParticipantData(request: NextRequest) {
 }
 
 export async function createMcpWriteTokenData(input: {
+  eventSlug?: string;
   participantId?: string;
   expiresInHours?: number;
   auditIp?: string;
 }) {
   if (!input.participantId) throw new Error("Choose a participant for this MCP write token.");
+  const eventSlug = input.eventSlug || DEFAULT_EVENT_SLUG;
   const token = `mcp_${randomBytes(24).toString("base64url")}`;
   const now = nowIso();
   const expiresInHours = Math.min(720, Math.max(1, Math.floor(input.expiresInHours || 72)));
@@ -2085,19 +2226,35 @@ export async function createMcpWriteTokenData(input: {
   };
   if (!useSupabaseStore()) {
     mutateStore((store) => {
-      if (record.participantId && !store.participants.some((participant) => participant.id === record.participantId)) {
+      const event = getEventOrThrow(store, eventSlug);
+      const participant = store.participants.find((item) => item.id === record.participantId);
+      if (!participant) {
         throw new Error("Participant not found.");
+      }
+      if (participant.eventId !== event.id) {
+        throw new Error("Participant does not belong to this event.");
+      }
+      if (participant.participantType === "platform") {
+        throw new Error("The platform provision account cannot receive MCP write tokens.");
       }
       store.mcpTokens.push(record);
       createAuditLog(store, {
         action: "create_mcp_token",
         entityType: "mcp_token",
         entityId: record.id,
-        details: { participantId: record.participantId || "any", expiresAt },
+        details: { eventId: event.id, eventSlug: event.slug, participantId: record.participantId, expiresAt },
         ip: input.auditIp
       });
     });
   } else {
+    const eventRows = await selectRows("events", `select=*&slug=eq.${encodeURIComponent(eventSlug)}&limit=1`);
+    const event = eventRows[0] ? eventFromRow(eventRows[0]) : undefined;
+    if (!event) throw new Error(`Event not found: ${eventSlug}`);
+    const participantRows = await selectRows("participants", `select=*&id=eq.${encodeURIComponent(record.participantId || "")}&limit=1`);
+    const participant = participantRows[0] ? participantFromRow(participantRows[0]) : undefined;
+    if (!participant) throw new Error("Participant not found.");
+    if (participant.eventId !== event.id) throw new Error("Participant does not belong to this event.");
+    if (participant.participantType === "platform") throw new Error("The platform provision account cannot receive MCP write tokens.");
     await upsertRows("mcp_tokens", [mcpTokenToRow(record)], "id");
     await upsertRows("admin_audit_logs", [
       auditLogToRow({
@@ -2105,7 +2262,7 @@ export async function createMcpWriteTokenData(input: {
         action: "create_mcp_token",
         entityType: "mcp_token",
         entityId: record.id,
-        details: { participantId: record.participantId || "any", expiresAt },
+        details: { eventId: event.id, eventSlug: event.slug, participantId: record.participantId, expiresAt },
         ip: input.auditIp,
         createdAt: now
       })

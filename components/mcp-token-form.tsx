@@ -1,10 +1,16 @@
 "use client";
 
 import { useState } from "react";
+import type { FormEvent } from "react";
+
+type InputChangeEvent = { currentTarget: HTMLInputElement };
+type SelectChangeEvent = { currentTarget: HTMLSelectElement };
 
 export function McpTokenForm({
+  eventSlug,
   participants
 }: {
+  eventSlug: string;
   participants: Array<{ id: string; nickname: string; participantType: string }>;
 }) {
   const [participantId, setParticipantId] = useState(participants[0]?.id || "");
@@ -14,7 +20,7 @@ export function McpTokenForm({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function submit(event: React.FormEvent) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
@@ -23,7 +29,7 @@ export function McpTokenForm({
       const response = await fetch("/api/admin/mcp-tokens", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify({ participantId, expiresInHours: Number(expiresInHours) })
+        body: JSON.stringify({ eventSlug, participantId, expiresInHours: Number(expiresInHours) })
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not create MCP token.");
@@ -39,11 +45,19 @@ export function McpTokenForm({
   return (
     <form onSubmit={submit} className="grid gap-3">
       <label className="grid gap-2 text-sm font-extrabold">
+        Event
+        <input
+          className="focus-ring min-h-11 rounded-xl border-[1.5px] border-line bg-paper px-3.5 text-sm font-semibold"
+          readOnly
+          value={eventSlug}
+        />
+      </label>
+      <label className="grid gap-2 text-sm font-extrabold">
         Token scope
         <select
           className="focus-ring min-h-11 rounded-xl border-[1.5px] border-line bg-white px-3.5 text-sm font-semibold"
           value={participantId}
-          onChange={(event: any) => setParticipantId(event.target.value)}
+          onChange={(event: SelectChangeEvent) => setParticipantId(event.currentTarget.value)}
         >
           <option value="">Choose participant</option>
           {participants.map((participant) => (
@@ -61,7 +75,7 @@ export function McpTokenForm({
           max="720"
           type="number"
           value={expiresInHours}
-          onChange={(event: any) => setExpiresInHours(event.target.value)}
+          onChange={(event: InputChangeEvent) => setExpiresInHours(event.currentTarget.value)}
         />
       </label>
       <button className="focus-ring min-h-11 rounded-full bg-ink px-5 text-sm font-black text-white disabled:cursor-not-allowed disabled:opacity-60" disabled={busy || !participantId}>

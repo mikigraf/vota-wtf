@@ -1,4 +1,5 @@
 import { BrandMark, Card, Container, Field, Kicker, Shell, SubmitButton, TextInput } from "@/components/ui";
+import { safeAdminNextPath } from "@/lib/safe-paths";
 import { firstSearchParam } from "@/lib/search-params";
 
 export default async function AdminLoginPage({ searchParams }: { searchParams: Promise<{ next?: string | string[]; error?: string | string[] }> }) {
@@ -20,7 +21,7 @@ export default async function AdminLoginPage({ searchParams }: { searchParams: P
             </p>
           ) : null}
           <form action="/api/admin/login" method="post" className="mt-6 grid gap-4">
-            <input type="hidden" name="next" value={next || "/admin"} />
+            <input type="hidden" name="next" value={safeAdminNextPath(next)} />
             <Field label="Weekend password">
               <TextInput type="password" name="password" autoComplete="current-password" required />
             </Field>

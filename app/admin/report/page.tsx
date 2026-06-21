@@ -1,8 +1,8 @@
 import { AdminLiveRefresh } from "@/components/admin-live-refresh";
 import { AdminNav } from "@/components/admin-nav";
 import { AdminPageHeader, Card, Container, Shell, Stat, StatusPill } from "@/components/ui";
+import { resolveAdminEvent } from "@/lib/admin-events";
 import { buildAdvancedAnalyticsReport } from "@/lib/analytics";
-import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { readDataStore } from "@/lib/data";
 import { firstSearchParam } from "@/lib/search-params";
 import { credits, mbucks, pct } from "@/lib/utils";
@@ -14,8 +14,20 @@ export default async function AdminReportPage({
 }: {
   searchParams: Promise<{ eventSlug?: string | string[] }>;
 }) {
-  const eventSlug = firstSearchParam((await searchParams).eventSlug) || DEFAULT_EVENT_SLUG;
-  const report = buildAdvancedAnalyticsReport(await readDataStore(), eventSlug);
+  const store = await readDataStore();
+  const { event, requestedSlug, usedFallback } = resolveAdminEvent(store, firstSearchParam((await searchParams).eventSlug));
+  if (!event) {
+    return (
+      <Shell className="bg-admin">
+        <Container className="grid gap-6">
+          <AdminNav />
+          <Card>No events are configured yet.</Card>
+        </Container>
+      </Shell>
+    );
+  }
+  const eventSlug = event?.slug || requestedSlug;
+  const report = buildAdvancedAnalyticsReport(store, eventSlug);
   const exportBase = `/api/admin/report?eventSlug=${encodeURIComponent(report.event.slug)}`;
 
   return (
@@ -36,8 +48,13 @@ export default async function AdminReportPage({
             </a>
           </div>
         </AdminPageHeader>
+        {usedFallback ? (
+          <Card className="border-warn bg-warn/15">
+            <p className="text-sm font-bold text-ink">Event not found: {requestedSlug}. Showing {report.event.name} instead.</p>
+          </Card>
+        ) : null}
         <p className="-mt-3 max-w-2xl text-sm font-semibold text-muted">
-          Conversion, role performance, market health, Cala context packs, and PixVerse-ready promo briefs.
+          Conversion, market health, Cala context packs, and PixVerse-ready promo briefs.
         </p>
         <Card className="bg-paper">
           <p className="text-sm font-bold text-muted">Operating on event</p>
@@ -52,28 +69,9 @@ export default async function AdminReportPage({
           <Stat label="Checkout conversion" value={pct(report.funnel.checkoutRate)} />
           <Stat label="Prediction actions" value={report.overview.predictionsSubmitted} />
           <Stat label="Committed" value={mbucks(report.overview.creditsCommitted)} />
-          <Stat label="Virtual provision" value={mbucks(report.overview.virtualProvisionCredits)} />
+          <Stat label="Platform provision" value={mbucks(report.overview.virtualProvisionCredits)} />
           <Stat label="Resolved markets" value={report.funnel.resolvedWinners} />
         </section>
-
-        <Card>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-black">Role performance</h2>
-            <StatusPill>{report.event.stageMode}</StatusPill>
-          </div>
-          <div className="grid gap-2">
-            {report.rolePerformance.map((role) => (
-              <div key={role.role} className="grid gap-2 rounded-xl bg-paper p-3 md:grid-cols-[180px_repeat(5,minmax(0,1fr))] md:items-center">
-                <strong>{role.label}</strong>
-                <span className="text-sm font-bold">{role.humans} humans</span>
-                <span className="text-sm font-bold">{role.predictions} predictions</span>
-                <span className="text-sm font-bold">{mbucks(role.committedCredits)} committed</span>
-                <span className="text-sm font-bold">{credits(role.oracleScore)} score</span>
-                <span className="min-w-0 break-words text-sm font-bold text-muted">{role.leadingOutcome}</span>
-              </div>
-            ))}
-          </div>
-        </Card>
 
         <Card>
           <h2 className="text-xl font-black">Market health</h2>
@@ -103,7 +101,6 @@ export default async function AdminReportPage({
                 <div key={pack.marketId} className="rounded-xl bg-paper p-3">
                   <div className="font-black">{pack.title}</div>
                   <p className="mt-1 text-sm font-semibold text-muted">{pack.roomThesis}</p>
-                  <p className="font-mono-vota mt-2 text-[10px] font-bold uppercase text-faded">{pack.roleSplit}</p>
                 </div>
               ))}
             </div>

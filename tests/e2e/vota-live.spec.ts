@@ -32,7 +32,8 @@ function readEnvFile(filePath: string) {
 
 const localEnv = readEnvFile(path.join(process.cwd(), ".env.local"));
 const adminPassword = process.env.ADMIN_PASSWORD || localEnv.ADMIN_PASSWORD || "local-admin-password";
-const megathonWinnerMarketId = "00000000-0000-4000-8000-000000000201";
+const megathonWinnerMarketId = "00000000-0000-4000-8000-000000001001";
+const dataBackend = process.env.VOTA_DATA_BACKEND || "supabase";
 
 function seedFreshRooms() {
   const result = spawnSync(process.execPath, ["-r", "./tests/register-ts.cjs", "scripts/seed-e2e.ts"], {
@@ -41,7 +42,7 @@ function seedFreshRooms() {
       ...localEnv,
       ...process.env,
       NEXT_PUBLIC_EVENT_SLUG: "megathon",
-      VOTA_DATA_BACKEND: "supabase",
+      VOTA_DATA_BACKEND: dataBackend,
       VOTA_DISABLE_AUTO_SEED: "1",
       MOLLIE_API_KEY: "",
       MOLLIE_READINESS_PAYMENT_ID: ""
@@ -106,11 +107,11 @@ test.describe("local Supabase live event flows", () => {
   test("multiple people join Megathon, wager, top up, resolve, and get receipts", async ({ browser }) => {
     const orbit = await joinRoom(browser, "megathon", "Orbit Caller");
     const nova = await joinRoom(browser, "megathon", "Nova Caller");
-    const talk = await joinRoom(browser, "megatalkTesting", "Talk Tester");
+    const talk = await joinRoom(browser, "testingmiki", "Talk Tester");
     await expectDuplicateNameBlocked(browser, "megathon", "Orbit Caller");
 
     const lockedProfile = await orbit.page.request.patch("/api/session/profile", {
-      data: { nickname: "Orbit Edited", email: "orbit.edited@e2e.test", role: "other" }
+      data: { nickname: "Orbit Edited", email: "orbit.edited@e2e.test" }
     });
     expect(lockedProfile.status()).toBe(409);
     await expect(orbit.page.getByText("Orbit Edited")).toHaveCount(0);
@@ -119,9 +120,9 @@ test.describe("local Supabase live event flows", () => {
     await pickOutcome(orbit.page, "Team Orbit");
     await pickOutcome(nova.page, "Team Nova");
 
-    await talk.page.goto("/e/megatalkTesting");
-    await expect(talk.page.getByText("megatalkTesting").or(talk.page.getByText(/Who wins megatalkTesting/i))).toBeVisible();
-    await talk.page.getByRole("link", { name: /Who wins megatalkTesting/i }).first().click();
+    await talk.page.goto("/e/testingmiki");
+    await expect(talk.page.getByText("testingmiki").or(talk.page.getByText(/Who wins testingmiki/i))).toBeVisible();
+    await talk.page.getByRole("link", { name: /Who wins testingmiki/i }).first().click();
     await pickOutcome(talk.page, "Team Atlas");
 
     await orbit.page.goto("/e/megathon");
@@ -140,6 +141,7 @@ test.describe("local Supabase live event flows", () => {
     await admin.getByRole("button", { name: "Lock market" }).click();
     await expect(admin.getByText(/Resolve/)).toBeVisible();
     await admin.getByLabel("Winning outcome").selectOption({ label: "Team Orbit" });
+    await admin.getByLabel("Type the winning outcome label").fill("Team Orbit");
     await admin.getByLabel(/I confirm this is the official result/).check();
     await admin.getByRole("button", { name: "Resolve and score" }).click();
     await expect(admin.getByText("This market has already been resolved.")).toBeVisible();
@@ -162,32 +164,32 @@ test.describe("local Supabase live event flows", () => {
     const adminContext = await browser.newContext();
     const admin = await adminContext.newPage();
     admin.on("dialog", (dialog) => dialog.accept());
-    await loginAdmin(admin, "/admin/events/megatalkTesting");
+    await loginAdmin(admin, "/admin/events/testingmiki");
 
-    await expect(admin.getByRole("heading", { name: "megatalkTesting" })).toBeVisible();
+    await expect(admin.getByRole("heading", { name: "testingmiki" })).toBeVisible();
     await admin.getByRole("link", { name: "Payments" }).click();
-    await expect(admin).toHaveURL(/\/admin\/payments\?eventSlug=megatalkTesting/);
+    await expect(admin).toHaveURL(/\/admin\/payments\?eventSlug=testingmiki/);
     await expect(admin.getByText("Operating on event")).toBeVisible();
-    await expect(admin.getByRole("heading", { name: "megatalkTesting" })).toBeVisible();
+    await expect(admin.getByRole("heading", { name: "testingmiki" })).toBeVisible();
 
-    await admin.goto("/admin/stage?eventSlug=megatalkTesting");
+    await admin.goto("/admin/stage?eventSlug=testingmiki");
     await admin.getByLabel("Stage mode").selectOption("leaderboard");
     await admin.getByRole("button", { name: "Update stage" }).click();
-    await expect(admin).toHaveURL(/\/admin\/stage\?eventSlug=megatalkTesting/);
+    await expect(admin).toHaveURL(/\/admin\/stage\?eventSlug=testingmiki/);
 
-    await admin.goto("/stage/megatalkTesting");
+    await admin.goto("/stage/testingmiki");
     await expect(admin.getByText("Top Oracles").or(admin.getByText("No scored entries yet."))).toBeVisible();
 
-    await admin.goto("/admin/stage?eventSlug=megatalkTesting");
+    await admin.goto("/admin/stage?eventSlug=testingmiki");
     await admin.getByLabel("Stage mode").selectOption("live");
     await admin.getByLabel("Emergency pause sensitive user actions").check();
     await admin.getByRole("button", { name: "Update stage" }).click();
 
-    const participant = await joinRoom(browser, "megatalkTesting", "Paused Player");
-    await participant.page.goto("/e/megatalkTesting");
+    const participant = await joinRoom(browser, "testingmiki", "Paused Player");
+    await participant.page.goto("/e/testingmiki");
     await expect(participant.page.getByText("Predictions are paused")).toBeVisible();
 
-    await admin.goto("/admin/stage?eventSlug=megatalkTesting");
+    await admin.goto("/admin/stage?eventSlug=testingmiki");
     await admin.getByLabel("Emergency pause sensitive user actions").uncheck();
     await admin.getByRole("button", { name: "Update stage" }).click();
     await participant.page.reload();

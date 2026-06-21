@@ -16,13 +16,37 @@ export async function GET(request: NextRequest) {
     .filter((intent) => participantIds.has(intent.participantId))
     .map((intent) => {
       const participant = store.participants.find((item) => item.id === intent.participantId);
+      const linkedPurchase = intent.purchaseId ? store.purchases.find((purchase) => purchase.id === intent.purchaseId) : undefined;
       return {
         ...intent,
         participantName: participant?.nickname || "",
-        participantRole: participant?.role || ""
+        participantEmail: participant?.email || "",
+        linkedPurchaseStatus: linkedPurchase?.status || "intent",
+        totalClickValueEur: intent.amountEur * intent.clickCount,
+        totalClickCredits: intent.credits * intent.clickCount
       };
     });
   if (request.nextUrl.searchParams.get("format") === "csv") {
+    if (request.nextUrl.searchParams.get("type") === "intents") {
+      return csvResponse(
+        "vota-checkout-intents.csv",
+        checkoutIntents.map((intent) => ({
+          id: intent.id,
+          participantId: intent.participantId,
+          participantName: intent.participantName,
+          participantEmail: intent.participantEmail,
+          clickCount: intent.clickCount,
+          amountEurEach: intent.amountEur,
+          totalClickValueEur: intent.totalClickValueEur,
+          creditsEach: intent.credits,
+          totalClickCredits: intent.totalClickCredits,
+          purchaseId: intent.purchaseId || "",
+          linkedPurchaseStatus: intent.linkedPurchaseStatus,
+          firstClickedAt: intent.firstClickedAt,
+          lastClickedAt: intent.lastClickedAt
+        }))
+      );
+    }
     return csvResponse(
       "vota-test-purchases.csv",
       purchases.map((purchase) => ({

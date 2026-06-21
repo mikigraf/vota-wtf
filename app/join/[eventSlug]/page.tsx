@@ -1,16 +1,12 @@
 import { JoinForm } from "@/components/join-form";
 import { BrandMark, Card, Container, Kicker, PublicTopBar, Shell } from "@/components/ui";
+import { PublicMissingLink } from "@/components/public-missing-link";
 import { getParticipantSessionId } from "@/lib/auth";
-import { findEventBySlugData, getSessionParticipantData } from "@/lib/data";
+import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { findEventBySlugData, getSessionParticipantData, scopedParticipantNextPathData } from "@/lib/data";
 import { hasCompletedProfile } from "@/lib/participants";
 import { firstSearchParam } from "@/lib/search-params";
 import { redirect } from "next/navigation";
-
-function safeNextPath(value?: string) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "";
-  if (value.startsWith("/admin") || value.startsWith("/api")) return "";
-  return value;
-}
 
 export default async function JoinPage({
   params,
@@ -24,15 +20,15 @@ export default async function JoinPage({
   const event = await findEventBySlugData(eventSlug);
   if (!event) {
     return (
-      <Shell>
-        <Container>
-          <Card>Event not found.</Card>
-        </Container>
-      </Shell>
+      <PublicMissingLink
+        title="Room not found"
+        message="This room link is not active. Use the main live room to get into the arena."
+        href={`/join/${DEFAULT_EVENT_SLUG}`}
+      />
     );
   }
   const session = await getSessionParticipantData(await getParticipantSessionId());
-  const nextPath = safeNextPath(firstSearchParam(search.next));
+  const nextPath = await scopedParticipantNextPathData(firstSearchParam(search.next), eventSlug);
   if (session?.participant.eventId === event.id && hasCompletedProfile(session.participant)) {
     redirect(nextPath || `/e/${eventSlug}`);
   }

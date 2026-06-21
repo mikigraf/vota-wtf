@@ -1,10 +1,11 @@
 import { redirect } from "next/navigation";
 import { CheckoutReturnStatus } from "@/components/checkout-return-status";
+import { PublicMissingLink } from "@/components/public-missing-link";
 import { ButtonLink, Card, Container, Kicker, LiveDot, PublicTopBar, Shell, StatusPill } from "@/components/ui";
 import { PredictionPanel } from "@/components/prediction-panel";
 import { getParticipantSessionId } from "@/lib/auth";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
-import { findParticipantPurchaseData, getSessionParticipantData, readPublicMarketStoreData } from "@/lib/data";
+import { findMarketEventSlugData, findParticipantPurchaseData, getSessionParticipantData, readPublicMarketStoreData } from "@/lib/data";
 import { verifyAndCreditPurchase } from "@/lib/payments";
 import { hasCompletedProfile } from "@/lib/participants";
 import { firstSearchParam } from "@/lib/search-params";
@@ -24,17 +25,20 @@ export default async function MarketPage({
   const checkout = firstSearchParam(search.checkout);
   const sessionId = await getParticipantSessionId();
   let store = await readPublicMarketStoreData(marketId, sessionId);
-  const market = store.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
-  if (!market) {
+  const initialMarket = store.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
+  if (!initialMarket) {
+    const recoveryEventSlug = await findMarketEventSlugData(marketId);
     return (
-      <Shell>
-        <Container>
-          <Card>Market not found.</Card>
-        </Container>
-      </Shell>
+      <PublicMissingLink
+        title="Prediction not found"
+        message="That prediction card is no longer available. Go back to the live room for the active cards."
+        action="Back to live room"
+        href={`/e/${recoveryEventSlug || DEFAULT_EVENT_SLUG}`}
+      />
     );
   }
-  const event = store.events.find((item) => item.id === market.eventId);
+  let market = initialMarket;
+  let event = store.events.find((item) => item.id === market.eventId);
   let session = getSessionParticipant(store, sessionId);
   if (session?.participant.eventId !== market.eventId || !hasCompletedProfile(session?.participant)) {
     const next = checkout ? `/m/${market.id}?checkout=${encodeURIComponent(checkout)}` : `/m/${market.id}`;
@@ -65,6 +69,20 @@ export default async function MarketPage({
         else checkoutMessage = "Checkout return received. Waiting for verified payment status.";
       }
       store = await readPublicMarketStoreData(marketId, sessionId);
+      const refreshedMarket = store.markets.find((item) => item.id === marketId && item.status !== "draft" && item.status !== "voided");
+      if (!refreshedMarket) {
+        const recoveryEventSlug = await findMarketEventSlugData(marketId);
+        return (
+          <PublicMissingLink
+            title="Prediction not found"
+            message="That prediction card is no longer available. Go back to the live room for the active cards."
+            action="Back to live room"
+            href={`/e/${recoveryEventSlug || DEFAULT_EVENT_SLUG}`}
+          />
+        );
+      }
+      market = refreshedMarket;
+      event = store.events.find((item) => item.id === market.eventId);
       session = getSessionParticipant(store, sessionId);
     }
   }

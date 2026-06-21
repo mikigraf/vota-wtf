@@ -1,9 +1,11 @@
 import { NextRequest } from "next/server";
 import { getParticipantSessionIdFromRequest } from "@/lib/auth";
-import { getSessionParticipantData, placePredictionData, predictionPreviewData, readPublicMarketStoreData } from "@/lib/data";
+import { placePredictionData, predictionPreviewData, readPublicMarketStoreData } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
 import { hasCompletedProfile } from "@/lib/participants";
 import { getSessionParticipant, userMarketState } from "@/lib/store";
+
+export const maxDuration = 60;
 
 function predictionRequestId(request: NextRequest, body: Record<string, unknown>) {
   const header = request.headers.get("idempotency-key") || request.headers.get("x-idempotency-key") || "";
@@ -59,17 +61,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const session = await getSessionParticipantData(getParticipantSessionIdFromRequest(request));
-  if (!session) return badRequest("Join the event before predicting.", 401);
-  if (session.participant.isBanned) return badRequest("This profile is paused by moderation.", 403);
-  if (!hasCompletedProfile(session.participant)) return badRequest("Finish your profile before predicting.", 401);
+  const sessionId = getParticipantSessionIdFromRequest(request);
+  if (!sessionId) return badRequest("Join the event before predicting.", 401);
   const body = await readJsonObject(request);
   try {
     const amountCredits = parseAmountCredits(body.amountCredits, { required: true });
     const requestId = predictionRequestId(request, body);
     if (!requestId) return badRequest("Prediction request id required. Refresh and try again.", 400);
-    const result = await placePredictionData(session.session.id, {
-      participantId: session.participant.id,
+    const result = await placePredictionData(sessionId, {
       marketId: id,
       outcomeId: String(body.outcomeId || ""),
       amountCredits,
@@ -80,9 +79,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       action: result.action,
       aggregate: result.aggregate,
       wallet: result.wallet,
-      user: result.user
+      ...(result.user ? { user: result.user } : {})
     });
   } catch (error) {
-    return badRequest(error instanceof Error ? error.message : "Prediction failed.");
+    const message = error instanceof Error ? error.message : "Prediction failed.";
+    const status = message.includes("Join the event") || message.includes("Finish your profile")
+      ? 401
+      : message.includes("paused by moderation")
+        ? 403
+        : 400;
+    return badRequest(message, status);
   }
 }

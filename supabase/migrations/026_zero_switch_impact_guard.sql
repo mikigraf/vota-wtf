@@ -107,6 +107,7 @@ declare
   v_current_user_signal integer := 0;
   v_share_max integer := 0;
   v_impact_max integer := 0;
+  v_zero_switch_allowed boolean := false;
   v_try_amount integer;
   v_try_signal integer;
   v_current_share numeric;
@@ -125,6 +126,7 @@ begin
     and (
       nullif(trim(v_participant.nickname), '') is null
       or lower(trim(v_participant.nickname)) = 'oracle'
+      or coalesce(v_participant.email, '') !~* '^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$'
       or v_participant.role not in ('builder', 'sponsor', 'investor', 'other')
     )
   then
@@ -185,10 +187,28 @@ begin
   if v_fair_launch then
     v_share_max := v_market.max_action_stake;
     v_impact_max := v_market.max_action_stake;
+    v_zero_switch_allowed := true;
   elsif coalesce(v_aggregate.total_signal_credits, 0) <= 0 then
     v_share_max := v_market.max_action_stake;
     v_impact_max := v_market.max_action_stake;
+    v_zero_switch_allowed := true;
   else
+    if v_position.id is not null and v_position.outcome_id <> p_outcome_id then
+      v_zero_switch_allowed := not exists (
+        select 1
+        from outcomes o
+        where o.market_id = p_market_id
+          and abs(
+            greatest(
+              coalesce((v_aggregate.outcome_credit_totals ->> o.id::text)::integer, 0)
+              - case when o.id = v_position.outcome_id then v_position.signal_credits else 0 end
+              + case when o.id = p_outcome_id then v_position.signal_credits else 0 end,
+              0
+            )::numeric / greatest(v_aggregate.total_signal_credits, 1)
+            - coalesce((v_aggregate.outcome_credit_totals ->> o.id::text)::integer, 0)::numeric / greatest(v_aggregate.total_signal_credits, 1)
+          ) > 0.05
+      );
+    end if;
     for v_try_amount in 1..v_market.max_action_stake loop
       v_try_signal := v_try_amount - floor(v_try_amount * 0.02);
       if (v_current_user_signal + v_try_signal)::numeric / (v_aggregate.total_signal_credits + v_try_signal) <= v_max_share then
@@ -223,6 +243,14 @@ begin
   end if;
 
   v_allowed := least(v_wallet.balance_credits, v_market.max_action_stake, v_step_cap, v_share_max, v_impact_max);
+  if v_amount = 0
+    and v_position.id is not null
+    and v_position.outcome_id <> p_outcome_id
+    and not v_fair_launch
+    and not v_zero_switch_allowed
+  then
+    raise exception 'This market cannot absorb that switch yet. This market can absorb up to 0 Credits from you right now.';
+  end if;
   if v_amount > v_allowed then
     if v_position.id is not null and v_position.outcome_id <> p_outcome_id then
       raise exception 'This market cannot absorb that switch yet. This market can absorb up to % Credits from you right now.', v_allowed;

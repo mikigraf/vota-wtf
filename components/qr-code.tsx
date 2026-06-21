@@ -261,7 +261,7 @@ export function createQrMatrix(value: string) {
   return createQrCode(value).matrix;
 }
 
-export function QrCode({ value, title = "QR code" }: { value: string; title?: string }) {
+export function QrCode({ value, title = "QR code", className = "aspect-square w-full max-w-[280px] bg-white" }: { value: string; title?: string; className?: string }) {
   let matrix: Matrix | undefined;
   let error = "";
   try {
@@ -271,7 +271,7 @@ export function QrCode({ value, title = "QR code" }: { value: string; title?: st
   }
   if (!matrix) {
     return (
-      <div className="flex aspect-square w-full max-w-[280px] flex-col items-center justify-center gap-3 bg-white p-4 text-center text-sm font-bold text-ink">
+      <div className={`${className} flex flex-col items-center justify-center gap-3 p-4 text-center text-sm font-bold text-ink`}>
         <span>{error}</span>
         <span className="break-all text-xs text-muted">{value}</span>
       </div>
@@ -286,7 +286,7 @@ export function QrCode({ value, title = "QR code" }: { value: string; title?: st
       role="img"
       aria-label={title}
       shapeRendering="crispEdges"
-      className="aspect-square w-full max-w-[280px] bg-white"
+      className={className}
     >
       <title>{title}</title>
       <rect width={SIZE + 8} height={SIZE + 8} fill="white" />

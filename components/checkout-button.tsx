@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 
 export function CheckoutButton({
@@ -14,9 +14,12 @@ export function CheckoutButton({
 }) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const busyRef = useRef(false);
   const pathname = usePathname();
 
   async function checkout() {
+    if (busyRef.current || disabled) return;
+    busyRef.current = true;
     setBusy(true);
     setMessage("");
     try {
@@ -27,9 +30,13 @@ export function CheckoutButton({
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Checkout failed.");
+      if (typeof data.checkoutUrl !== "string" || data.checkoutUrl.length === 0) {
+        throw new Error("Checkout link was not returned.");
+      }
       window.location.href = data.checkoutUrl;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Checkout failed.");
+      busyRef.current = false;
       setBusy(false);
     }
   }

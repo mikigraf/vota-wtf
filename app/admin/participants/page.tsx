@@ -1,7 +1,7 @@
 import { AdminLiveRefresh } from "@/components/admin-live-refresh";
 import { AdminNav } from "@/components/admin-nav";
-import { AdminPageHeader, Card, Container, Select, Shell, SubmitButton, TextInput } from "@/components/ui";
-import { DEFAULT_EVENT_SLUG, ROLE_LABELS } from "@/lib/constants";
+import { AdminPageHeader, Card, Container, Shell, SubmitButton, TextInput } from "@/components/ui";
+import { resolveAdminEvent } from "@/lib/admin-events";
 import { readDataStore } from "@/lib/data";
 import { listParticipants } from "@/lib/participants";
 import { firstSearchParam } from "@/lib/search-params";
@@ -12,23 +12,21 @@ export const dynamic = "force-dynamic";
 export default async function ParticipantsPage({
   searchParams
 }: {
-  searchParams: Promise<{ q?: string | string[]; role?: string | string[]; eventSlug?: string | string[]; error?: string | string[] }>;
+  searchParams: Promise<{ q?: string | string[]; eventSlug?: string | string[]; error?: string | string[] }>;
 }) {
   const params = await searchParams;
   const store = await readDataStore();
   const rawQuery = firstSearchParam(params.q) || "";
-  const role = firstSearchParam(params.role) || "all";
-  const eventSlug = firstSearchParam(params.eventSlug) || DEFAULT_EVENT_SLUG;
+  const { event, requestedSlug, usedFallback } = resolveAdminEvent(store, firstSearchParam(params.eventSlug));
+  const eventSlug = event?.slug || requestedSlug;
   const error = firstSearchParam(params.error);
-  const participants = listParticipants(store, { eventSlug, q: rawQuery, role });
+  const participants = listParticipants(store, { eventSlug, q: rawQuery });
   const exportParams = new URLSearchParams({ format: "csv", eventSlug });
   if (rawQuery) exportParams.set("q", rawQuery);
-  if (role !== "all") exportParams.set("role", role);
   const contextFields = (
     <>
       <input type="hidden" name="eventSlug" value={eventSlug} />
       <input type="hidden" name="q" value={rawQuery} />
-      <input type="hidden" name="role" value={role} />
     </>
   );
   return (
@@ -43,23 +41,20 @@ export default async function ParticipantsPage({
             </a>
           </div>
         </AdminPageHeader>
+        {usedFallback ? (
+          <Card className="border-warn bg-warn/15">
+            <p className="text-sm font-bold text-ink">Event not found: {requestedSlug}. Showing {event?.name || eventSlug} instead.</p>
+          </Card>
+        ) : null}
         {error ? (
           <div className="rounded-xl border border-ember bg-ember/10 p-3 text-sm font-bold text-ember">
             Participant update failed: {error}
           </div>
         ) : null}
         <Card>
-          <form className="grid gap-3 md:grid-cols-[1fr_220px_auto]" action="/admin/participants">
+          <form className="grid gap-3 md:grid-cols-[1fr_auto]" action="/admin/participants">
             <input type="hidden" name="eventSlug" value={eventSlug} />
             <TextInput name="q" placeholder="Search nickname" defaultValue={rawQuery} />
-            <Select name="role" defaultValue={role}>
-              <option value="all">All roles</option>
-              {Object.entries(ROLE_LABELS).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {label}
-                </option>
-              ))}
-            </Select>
             <SubmitButton>Filter</SubmitButton>
           </form>
         </Card>
@@ -79,7 +74,7 @@ export default async function ParticipantsPage({
                   <div>
                     <div className="font-black">{participant.nickname}</div>
                     <div className="text-sm font-semibold text-muted">
-                      {participant.role} | {participant.participantType} | wallet {mbucks(wallet?.balanceCredits || 0)} | score {credits(participant.oracleScore)}
+                      {participant.participantType} | wallet {mbucks(wallet?.balanceCredits || 0)} | score {credits(participant.oracleScore)}
                     </div>
                     <div className="font-mono-vota text-[10px] font-bold uppercase text-faded">
                       {participant.isBanned ? "Banned" : "Active"} | {participant.isAvatarHidden ? "Avatar hidden" : "Avatar visible"}
@@ -99,7 +94,6 @@ export default async function ParticipantsPage({
                       label={participant.isAvatarHidden ? "Show avatar" : "Hide avatar"}
                       eventSlug={eventSlug}
                       q={rawQuery}
-                      role={role}
                     />
                     <ModerationButton
                       participantId={participant.id}
@@ -108,7 +102,6 @@ export default async function ParticipantsPage({
                       danger={!participant.isBanned}
                       eventSlug={eventSlug}
                       q={rawQuery}
-                      role={role}
                     />
                   </div>
                 </div>
@@ -127,8 +120,7 @@ function ModerationButton({
   label,
   danger,
   eventSlug,
-  q,
-  role
+  q
 }: {
   participantId: string;
   action: string;
@@ -136,13 +128,11 @@ function ModerationButton({
   danger?: boolean;
   eventSlug: string;
   q: string;
-  role: string;
 }) {
   return (
     <form action="/api/admin/participants" method="post">
       <input type="hidden" name="eventSlug" value={eventSlug} />
       <input type="hidden" name="q" value={q} />
-      <input type="hidden" name="role" value={role} />
       <input type="hidden" name="participantId" value={participantId} />
       <input type="hidden" name="action" value={action} />
       <SubmitButton danger={danger}>{label}</SubmitButton>

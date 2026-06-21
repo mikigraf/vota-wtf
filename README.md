@@ -29,6 +29,8 @@ Run the app against local Supabase:
 npm run dev:local:supabase
 ```
 
+The generated local env points the root journey at `/join/megathon`, matching the seeded local rehearsal rooms.
+
 The generated local env block intentionally leaves `MOLLIE_API_KEY` empty. Outside production, that enables the built-in local checkout simulator at `/checkout/test/[purchaseId]` while keeping the production code path test-mode-only for real Mollie keys.
 
 Useful local Supabase URLs after `supabase start`:
@@ -51,18 +53,48 @@ Run the local-Supabase gate after `supabase start`:
 npm run verify:local:supabase
 ```
 
+Run the local 500-user engine gate before a live-room rehearsal:
+
+```bash
+npm run load:500
+```
+
+`load:500` exercises the market engine directly. `load:500:http` drives real HTTP requests through the production app by default, including session, profile, prediction, and idempotency replay calls:
+
+```bash
+LOAD_MARKET_ID=<open-disposable-market-id> LOAD_ALLOW_LIVE=1 npm run load:500:http
+```
+
+It defaults to the Megathon production event on `https://vota.wtf`, but live writes are refused unless `LOAD_ALLOW_LIVE=1` and `LOAD_MARKET_ID` points at an open disposable test market. Override `LOAD_ORIGIN` and `LOAD_EVENT_SLUG` when you intentionally want a different target.
+
+Run the no-browser local server smoke gate:
+
+```bash
+npm run smoke:json
+```
+
+That command creates a temporary local JSON store, seeds `Megathon` and `testingmiki`, starts the production Next server on a free `127.0.0.1` port, and verifies the join, profile, market, prediction, local checkout, stage, admin login, public-state, leaderboard, and readiness HTTP surfaces. It is included after `npm run build` in `npm run verify` so the normal local gate proves the built app serves real pages and APIs even when Playwright browsers are unavailable. In restricted sandboxes that cannot bind a local port, it exits with a clear skip message; `npm run verify:deploy` and `REQUIRE_SMOKE_SERVER=1 npm run smoke:json` make that condition fail.
+
 Run the full browser E2E loop against a fresh local Supabase database:
 
 ```bash
 npm run e2e:local
 ```
 
-That command starts local Supabase, resets the database, writes `.env.local`, seeds fresh `Megathon` and `megatalkTesting` rooms, starts Next on `http://127.0.0.1:3100`, and runs the desktop and mobile Playwright scenarios.
+That command starts local Supabase, resets the database, writes `.env.local`, seeds fresh `Megathon` and `testingmiki` rooms, starts Next on `http://127.0.0.1:3100`, and runs the desktop and mobile Playwright scenarios.
 
-Run the deployment gate after setting `READINESS_URL` to the deployed origin or `/api/readiness` URL:
+Run the same desktop and mobile Playwright scenarios without Docker/Supabase by using an isolated local JSON store:
 
 ```bash
-READINESS_URL=https://your-deploy.example npm run verify:deploy
+npm run e2e:json
+```
+
+That command creates a temporary `VOTA_STORE_FILE`, seeds fresh `Megathon` and `testingmiki` rooms into it, starts Next on `http://127.0.0.1:3100`, and runs the browser tests. Use this as a fast UX regression check when Docker is unavailable; keep `npm run e2e:local` as the production-like Supabase gate.
+
+Run the deployment gate against the canonical public domain:
+
+```bash
+READINESS_URL=https://vota.wtf npm run verify:deploy
 ```
 
 `verify:deploy` requires a reachable readiness endpoint and fails if the deployed app is not ready.
@@ -85,7 +117,7 @@ supabase link --project-ref <your-supabase-project-ref>
 npm run supabase:push
 ```
 
-The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/036_admin_event_switcher_seed_events.sql`.
+The migrations create the `avatars` and `market-images` storage buckets, seed the MEGATHON event/cards, lock down public table access, add hot-path indexes, and grant transactional RPC functions to `service_role`. For the current live-event build, production must include every migration through `supabase/migrations/048_hot_path_indexes.sql`.
 
 Production Supabase auto-seeding is disabled by default. Leave `VOTA_ENABLE_PRODUCTION_AUTO_SEED` unset for the live event so demo seed markets and participants cannot be inserted on first read.
 
@@ -95,11 +127,11 @@ Deploy the app on Vercel:
 2. Keep the framework preset as `Next.js`.
 3. Use the committed `vercel.json` defaults: `npm install`, `npm run build`, `npm run dev`.
 4. Add the production environment variables from `.env.example`.
-5. Set `NEXT_PUBLIC_BASE_URL` to the deployed HTTPS origin or custom domain.
+5. Set `NEXT_PUBLIC_BASE_URL` to `https://vota.wtf`. Production generated URLs intentionally ignore Vercel preview/deployment hosts.
 6. Deploy, then run:
 
 ```bash
-READINESS_URL=https://your-vercel-domain.example npm run verify:deploy
+READINESS_URL=https://vota.wtf npm run verify:deploy
 ```
 
 After the first successful test checkout, set `MOLLIE_READINESS_PAYMENT_ID` to a successful Mollie test payment id from the same Mollie test account and redeploy. `/api/readiness` is the public deploy gate; `/admin/readiness` shows the full admin-only readiness detail after login.
@@ -111,17 +143,17 @@ Required for deployment:
 ```txt
 ADMIN_PASSWORD=<strong random password>
 ADMIN_SESSION_SECRET=<long random secret>
-NEXT_PUBLIC_EVENT_SLUG=megathon-2026
+NEXT_PUBLIC_EVENT_SLUG=megathon
 VOTA_DATA_BACKEND=supabase
 SUPABASE_URL=...
 SUPABASE_ANON_KEY=...
 SUPABASE_SERVICE_ROLE_KEY=...
 NEXT_PUBLIC_SUPABASE_URL=...
 NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-NEXT_PUBLIC_BASE_URL=https://your-deploy.example
+NEXT_PUBLIC_BASE_URL=https://vota.wtf
 NEXT_PUBLIC_QR_BASE_URL=https://vota.wtf
-APP_URL=https://your-deploy.example
-WEBHOOK_BASE_URL=https://your-deploy.example
+APP_URL=https://vota.wtf
+WEBHOOK_BASE_URL=https://vota.wtf
 MOLLIE_API_KEY=test_xxx
 MOLLIE_PROFILE_ID=pfl_optional_profile_id
 MOLLIE_TESTMODE_ONLY=true
@@ -143,4 +175,4 @@ Production must use a Mollie `test_` key. Live Mollie keys, external cash-out me
 
 ## CI
 
-GitHub Actions runs `npm install` and `npm run verify` on pushes to `main` and pull requests. The node test suite exercises the join, prediction, checkout, admin, readiness, MCP, and receipt flows through route handlers. For full local browser coverage with multiple real browser users, run `npm run e2e:local`.
+GitHub Actions runs `npm install` and `npm run verify` on pushes to `main` and pull requests. The node test suite exercises the join, prediction, checkout, admin, readiness, MCP, and receipt flows through route handlers. For full local browser coverage with multiple real browser users, run `npm run e2e:json` for the no-Docker smoke path and `npm run e2e:local` for the Supabase-backed gate.

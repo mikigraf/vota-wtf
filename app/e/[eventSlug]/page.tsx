@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { CheckoutButton } from "@/components/checkout-button";
 import { CheckoutReturnStatus } from "@/components/checkout-return-status";
 import { PublicEventLive } from "@/components/public-event-live";
+import { PublicMissingLink } from "@/components/public-missing-link";
 import { ButtonLink, Card, Container, DisplayTitle, Kicker, LiveDot, PublicTopBar, Shell, Stat, Tape } from "@/components/ui";
 import { getParticipantSessionId } from "@/lib/auth";
 import { DEFAULT_EVENT_SLUG, SAFE_COPY } from "@/lib/constants";
@@ -37,11 +38,11 @@ export default async function EventPage({
   const checkout = firstSearchParam(search.checkout);
   if (!event) {
     return (
-      <Shell>
-        <Container>
-          <Card>Event not found.</Card>
-        </Container>
-      </Shell>
+      <PublicMissingLink
+        title="Room not found"
+        message="This event link is not active. Jump back into the main live room."
+        href={`/join/${DEFAULT_EVENT_SLUG}`}
+      />
     );
   }
   if (session?.participant.eventId !== event.id || !hasCompletedProfile(session?.participant)) {
@@ -193,7 +194,7 @@ export default async function EventPage({
               Call it before <span className="text-ember">the room does.</span>
             </DisplayTitle>
             <p className="mt-5 max-w-2xl text-lg font-semibold leading-7 text-muted">
-              Predict MEGATHON outcomes, commit free MegaBucks, and earn Oracle Score when your call was early and right.
+              Predict {state.event.name} outcomes, commit free MegaBucks, and earn Oracle Score when your call was early and right.
               MegaBucks have no cash value.
             </p>
           </div>
@@ -338,7 +339,7 @@ function LeaderboardMini({
   metric = "oracleScore"
 }: {
   title: string;
-  rows: Array<{ id: string; nickname: string; role: string; oracleScore: number; earlyScore: number; contrarianScore: number }>;
+  rows: Array<{ id: string; nickname: string; oracleScore: number; earlyScore: number; contrarianScore: number }>;
   metric?: "oracleScore" | "earlyScore" | "contrarianScore";
 }) {
   return (

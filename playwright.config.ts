@@ -27,6 +27,8 @@ function readEnvFile(filePath: string) {
 const baseURL = process.env.PLAYWRIGHT_BASE_URL || "http://127.0.0.1:3100";
 const devServerPort = new URL(baseURL).port || "3000";
 const localEnv = readEnvFile(path.join(process.cwd(), ".env.local"));
+const dataBackend = process.env.VOTA_DATA_BACKEND || localEnv.VOTA_DATA_BACKEND || "supabase";
+const disableAutoSeed = process.env.VOTA_DISABLE_AUTO_SEED || localEnv.VOTA_DISABLE_AUTO_SEED || "1";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -55,8 +57,8 @@ export default defineConfig({
       ...localEnv,
       ...process.env,
       NEXT_PUBLIC_EVENT_SLUG: process.env.NEXT_PUBLIC_EVENT_SLUG || "megathon",
-      VOTA_DATA_BACKEND: "supabase",
-      VOTA_DISABLE_AUTO_SEED: "1",
+      VOTA_DATA_BACKEND: dataBackend,
+      VOTA_DISABLE_AUTO_SEED: disableAutoSeed,
       PLAYWRIGHT_BASE_URL: baseURL,
       NEXT_PUBLIC_BASE_URL: baseURL,
       NEXT_PUBLIC_QR_BASE_URL: baseURL,

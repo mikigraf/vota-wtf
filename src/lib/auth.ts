@@ -4,6 +4,7 @@ import type { NextRequest } from "next/server";
 const ADMIN_COOKIE = "vota_admin_session";
 const ADMIN_API_COOKIE = "vota_admin_api_session";
 const PARTICIPANT_COOKIE = "vota_participant_session";
+const PARTICIPANT_SESSION_HEADER = "x-vota-participant-session";
 const JOIN_GUARD_COOKIE = "vota_join_guard";
 const ADMIN_MAX_AGE_SECONDS = 60 * 60 * 18;
 const PARTICIPANT_MAX_AGE_SECONDS = 60 * 60 * 48;
@@ -130,7 +131,7 @@ export async function isAdminFromCookies() {
 
 export async function isAdminFromRequest(request: NextRequest) {
   return verifyAdminToken(
-    request.cookies.get(ADMIN_COOKIE)?.value || request.cookies.get(ADMIN_API_COOKIE)?.value
+    getRequestCookie(request, ADMIN_COOKIE) || getRequestCookie(request, ADMIN_API_COOKIE)
   );
 }
 
@@ -175,7 +176,7 @@ export function newJoinGuardValue() {
 }
 
 export function getJoinGuardFromRequest(request: NextRequest) {
-  return request.cookies.get(JOIN_GUARD_COOKIE)?.value;
+  return getRequestCookie(request, JOIN_GUARD_COOKIE);
 }
 
 export async function joinGuardHash(value: string, ip?: string, userAgent?: string) {
@@ -200,7 +201,20 @@ export async function getParticipantSessionId() {
 }
 
 export function getParticipantSessionIdFromRequest(request: NextRequest) {
-  return request.cookies.get(PARTICIPANT_COOKIE)?.value;
+  return getRequestCookie(request, PARTICIPANT_COOKIE) || request.headers.get(PARTICIPANT_SESSION_HEADER)?.trim() || undefined;
+}
+
+function getRequestCookie(request: NextRequest, name: string) {
+  const structured = request.cookies.get(name)?.value;
+  if (structured) return structured;
+  const header = request.headers.get("cookie") || "";
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    const separator = trimmed.indexOf("=");
+    if (separator <= 0) continue;
+    if (trimmed.slice(0, separator) === name) return trimmed.slice(separator + 1);
+  }
+  return undefined;
 }
 
 export function adminCookieName() {

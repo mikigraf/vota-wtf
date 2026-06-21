@@ -70,13 +70,13 @@ export default async function BuildPage() {
       title: "Mollie test checkout",
       status: `${metrics.testCheckouts.completed} credited`,
       detail: `${mbucks(metrics.testCheckouts.creditsIssued)} issued, projected ${euro(metrics.testCheckouts.projectedEur)}`,
-      href: "/admin/payments"
+      href: `/admin/payments?eventSlug=${DEFAULT_EVENT_SLUG}`
     },
     {
       title: "Whale Guard economics",
       status: mbucks(metrics.virtualProvisionCredits),
-      detail: `${mbucks(metrics.creditsCommitted)} committed with 2% virtual provision tracked`,
-      href: "/admin"
+      detail: `${mbucks(metrics.creditsCommitted)} committed with 2% platform provision tracked`,
+      href: `/admin?eventSlug=${DEFAULT_EVENT_SLUG}`
     },
     {
       title: "Stage screen",
@@ -104,7 +104,7 @@ export default async function BuildPage() {
           </p>
           <div className="mt-5 flex flex-wrap gap-2">
             <ButtonLink href="/build/demo" variant="secondary">Open operator demo script</ButtonLink>
-            <ButtonLink href="/admin/readiness" variant="secondary">Open admin readiness</ButtonLink>
+            <ButtonLink href={`/admin/readiness?eventSlug=${DEFAULT_EVENT_SLUG}`} variant="secondary">Open admin readiness</ButtonLink>
           </div>
         </header>
         <section className="grid gap-3 md:grid-cols-4">

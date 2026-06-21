@@ -1,10 +1,9 @@
 export type Role = "builder" | "sponsor" | "investor" | "other";
-export type ParticipantType = "human" | "house_agent" | "external_agent";
+export type ParticipantType = "human" | "house_agent" | "external_agent" | "platform";
 export type MarketStatus = "draft" | "open" | "locked" | "resolved" | "voided";
 export type StageMode =
   | "join"
   | "live"
-  | "role_battle"
   | "humans_vs_agents"
   | "leaderboard"
   | "resolution";
@@ -35,6 +34,8 @@ export interface Participant {
   oracleScore: number;
   createdAt: string;
 }
+
+export type PublicParticipant = Omit<Participant, "role" | "email">;
 
 export interface ParticipantSession {
   id: string;
@@ -127,7 +128,8 @@ export type LedgerEntryType =
   | "prediction_commit"
   | "test_checkout_credit"
   | "void_refund"
-  | "resolution_credit";
+  | "resolution_credit"
+  | "platform_provision";
 
 export interface LedgerEntry {
   id: string;
@@ -167,6 +169,7 @@ export interface Purchase {
   credits: number;
   molliePaymentId?: string;
   checkoutUrl?: string;
+  returnTo?: string;
   createdAt: string;
   paidAt?: string;
   creditedAt?: string;
@@ -307,11 +310,10 @@ export interface PublicEventState {
     emergencyPaused: boolean;
   };
   markets: PublicMarketState[];
-  roleWinners: Record<Role, string>;
 }
 
 export interface UserMarketState {
-  participant?: Participant;
+  participant?: PublicParticipant;
   wallet?: Wallet;
   position?: Position & { outcomeLabel?: string };
   allowedByOutcome: Record<string, {
@@ -349,7 +351,6 @@ export interface PredictionPreview {
 export interface LeaderboardRow {
   id: string;
   nickname: string;
-  role: Role;
   participantType: ParticipantType;
   avatarUrl?: string;
   oracleScore: number;
@@ -362,7 +363,6 @@ export interface LeaderboardRow {
 
 export interface LeaderboardGroups {
   overall: LeaderboardRow[];
-  byRole: Record<Role, LeaderboardRow[]>;
   humans: LeaderboardRow[];
   agents: LeaderboardRow[];
   earlyCallers: LeaderboardRow[];

@@ -8,6 +8,7 @@ import { baseUrl, stageJoinUrl } from "../src/lib/utils";
 
 test("production config does not silently force the local JSON backend", () => {
   const envExample = fs.readFileSync(".env.example", "utf8");
+  assert.match(envExample, /^NEXT_PUBLIC_EVENT_SLUG=megathon$/m);
   assert.match(envExample, /^VOTA_DATA_BACKEND=supabase$/m);
   assert.doesNotMatch(envExample, /^VOTA_DATA_BACKEND=local$/m);
 });
@@ -21,7 +22,11 @@ test("local Supabase runbook and scripts are wired", () => {
   const config = fs.readFileSync("supabase/config.toml", "utf8");
   const seed = fs.readFileSync("supabase/seed.sql", "utf8");
   const envScript = fs.readFileSync("scripts/write-local-supabase-env.mjs", "utf8");
+  const loadScript = fs.readFileSync("scripts/load-500.ts", "utf8");
+  const loadHttpScript = fs.readFileSync("scripts/load-500-http.ts", "utf8");
+  const smokeJsonScript = fs.readFileSync("scripts/smoke-json-server.mjs", "utf8");
   const e2eRunner = fs.readFileSync("scripts/run-local-playwright.mjs", "utf8");
+  const e2eJsonRunner = fs.readFileSync("scripts/run-json-playwright.mjs", "utf8");
   const e2eSeed = fs.readFileSync("scripts/seed-e2e.ts", "utf8");
   const playwrightConfig = fs.readFileSync("playwright.config.ts", "utf8");
   const readme = fs.readFileSync("README.md", "utf8");
@@ -35,8 +40,13 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.equal(pkg.scripts["supabase:push"], "supabase db push");
   assert.equal(pkg.scripts["env:local:supabase"], "node scripts/write-local-supabase-env.mjs");
   assert.equal(pkg.scripts["load:500"], "node -r ./tests/register-ts.cjs scripts/load-500.ts");
+  assert.equal(pkg.scripts["load:500:http"], "node -r ./tests/register-ts.cjs scripts/load-500-http.ts");
+  assert.equal(pkg.scripts["smoke:json"], "node scripts/smoke-json-server.mjs");
   assert.equal(pkg.scripts["e2e"], "playwright test");
   assert.equal(pkg.scripts["e2e:local"], "node scripts/run-local-playwright.mjs");
+  assert.equal(pkg.scripts["e2e:json"], "node scripts/run-json-playwright.mjs");
+  assert.match(pkg.scripts.verify, /npm run smoke:json/);
+  assert.match(pkg.scripts["verify:deploy"], /REQUIRE_SMOKE_SERVER=1 npm run smoke:json/);
   assert.match(pkg.scripts["dev:local:supabase"], /env:local:supabase/);
   assert.match(pkg.scripts["verify:local:supabase"], /VOTA_DATA_BACKEND=supabase npm run verify/);
   assert.equal(vercel.framework, "nextjs");
@@ -47,17 +57,56 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(config, /\[storage\][\s\S]+enabled = true/);
   assert.match(seed, /Seed data is inserted by migrations/);
   assert.match(envScript, /supabase", \["status", "-o", "env"\]/);
+  assert.match(envScript, /NEXT_PUBLIC_EVENT_SLUG=megathon/);
+  assert.match(loadScript, /eventSlug: DEFAULT_EVENT_SLUG/);
+  assert.match(loadScript, /createParticipantSession\(store, DEFAULT_EVENT_SLUG\)/);
+  assert.match(loadHttpScript, /fetch\(`\$\{ORIGIN\}\$\{route\}`/);
+  assert.match(loadHttpScript, /"https:\/\/vota\.wtf"/);
+  assert.match(loadHttpScript, /"megathon-2026"/);
+  assert.match(loadHttpScript, /cookieHeader\(initResponse\)/);
+  assert.match(loadHttpScript, /x-vota-participant-session/);
+  assert.doesNotMatch(loadHttpScript, /app\/api\/session\/init\/route/);
+  assert.doesNotMatch(loadHttpScript, /app\/api\/session\/profile\/route/);
+  assert.doesNotMatch(loadHttpScript, /app\/api\/markets\/\[id\]\/predict\/route/);
+  assert.match(loadHttpScript, /LOAD_CONCURRENCY/);
+  assert.match(loadHttpScript, /LOAD_MARKET_ID/);
+  assert.match(loadHttpScript, /idempotencyReplays/);
+  assert.match(smokeJsonScript, /VOTA_DATA_BACKEND: "local"/);
+  assert.match(smokeJsonScript, /VOTA_STORE_FILE: storeFile/);
+  assert.match(smokeJsonScript, /scripts\/seed-e2e\.ts/);
+  assert.match(smokeJsonScript, /nextBin\(\), \["start"/);
+  assert.match(smokeJsonScript, /Next production server/);
+  assert.match(smokeJsonScript, /api\/session\/init/);
+  assert.match(smokeJsonScript, /api\/session\/profile/);
+  assert.match(smokeJsonScript, /api\/markets\/\$\{market\.id\}\/predict/);
+  assert.match(smokeJsonScript, /api\/payments\/mollie\/create-test-checkout/);
+  assert.match(smokeJsonScript, /Complete test checkout/);
+  assert.doesNotMatch(smokeJsonScript, /MEGATHON test checkout/);
+  assert.match(smokeJsonScript, /\/stage\/megathon/);
+  assert.match(smokeJsonScript, /\/admin\/login/);
+  assert.match(smokeJsonScript, /REQUIRE_SMOKE_SERVER/);
+  assert.match(smokeJsonScript, /Local server smoke skipped/);
   assert.match(envScript, /MOLLIE_API_KEY=/);
   assert.match(e2eRunner, /supabase", \["start"\]/);
   assert.match(e2eRunner, /supabase", \["db", "reset"\]/);
   assert.match(e2eRunner, /scripts\/seed-e2e\.ts/);
   assert.match(e2eRunner, /PLAYWRIGHT_BASE_URL: "http:\/\/127\.0\.0\.1:3100"/);
+  assert.match(e2eJsonRunner, /VOTA_DATA_BACKEND: "local"/);
+  assert.match(e2eJsonRunner, /VOTA_STORE_FILE: storeFile/);
+  assert.match(e2eJsonRunner, /scripts\/seed-e2e\.ts/);
+  assert.match(e2eJsonRunner, /PLAYWRIGHT_BASE_URL: "http:\/\/127\.0\.0\.1:3100"/);
   assert.match(playwrightConfig, /readEnvFile\(path\.join\(process\.cwd\(\), "\.env\.local"\)\)/);
   assert.match(playwrightConfig, /\.\.\.localEnv,[\s\S]+\.\.\.process\.env/);
+  assert.match(playwrightConfig, /const dataBackend = process\.env\.VOTA_DATA_BACKEND \|\| localEnv\.VOTA_DATA_BACKEND \|\| "supabase"/);
+  assert.match(playwrightConfig, /VOTA_DATA_BACKEND: dataBackend/);
   assert.match(e2eSeed, /slug: "megathon"/);
   assert.match(e2eSeed, /name: "Megathon"/);
-  assert.match(e2eSeed, /slug: "megatalkTesting"/);
-  assert.match(e2eSeed, /name: "megatalkTesting"/);
+  assert.match(e2eSeed, /slug: "testingmiki"/);
+  assert.match(e2eSeed, /name: "testingmiki"/);
+  assert.match(e2eSeed, /00000000-0000-4000-8000-000000000901/);
+  assert.match(e2eSeed, /00000000-0000-4000-8000-000000000902/);
+  assert.match(e2eSeed, /00000000-0000-4000-8000-000000001001/);
+  assert.match(e2eSeed, /00000000-0000-4000-8000-000000001101/);
   assert.match(playwrightConfig, /reuseExistingServer: process\.env\.PLAYWRIGHT_REUSE_SERVER === "1"/);
   assert.match(readme, /npm run supabase:start/);
   assert.match(readme, /supabase link --project-ref <your-supabase-project-ref>/);
@@ -65,10 +114,17 @@ test("local Supabase runbook and scripts are wired", () => {
   assert.match(readme, /Keep the framework preset as `Next\.js`/);
   assert.match(readme, /npm run dev:local:supabase/);
   assert.match(readme, /npm run e2e:local/);
-  assert.match(readme, /READINESS_URL=https:\/\/your-deploy\.example npm run verify:deploy/);
-  assert.match(readme, /READINESS_URL=https:\/\/your-vercel-domain\.example npm run verify:deploy/);
+  assert.match(readme, /npm run e2e:json/);
+  assert.match(readme, /npm run smoke:json/);
+  assert.match(readme, /no-browser local server smoke gate/);
+  assert.match(readme, /production Next server/);
+  assert.match(readme, /REQUIRE_SMOKE_SERVER=1/);
+  assert.match(readme, /temporary `VOTA_STORE_FILE`/);
+  assert.match(readme, /READINESS_URL=https:\/\/vota\.wtf npm run verify:deploy/);
+  assert.match(readme, /LOAD_MARKET_ID=<open-disposable-market-id>/);
   assert.match(readme, /docs\/live-event-readiness-plan\.md/);
-  assert.match(readme, /036_admin_event_switcher_seed_events\.sql/);
+  assert.match(readme, /048_hot_path_indexes\.sql/);
+  assert.match(readme, /^NEXT_PUBLIC_EVENT_SLUG=megathon$/m);
   assert.match(workflow, /node-version: 22/);
   assert.match(workflow, /npm install/);
   assert.match(workflow, /CI: "false"/);
@@ -78,7 +134,13 @@ test("local Supabase runbook and scripts are wired", () => {
 test("live-event readiness plan captures the manual gates automation cannot prove", () => {
   const plan = fs.readFileSync("docs/live-event-readiness-plan.md", "utf8");
 
-  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/036_admin_event_switcher_seed_events\.sql` applied/);
+  assert.match(plan, /Supabase production must have every migration through `supabase\/migrations\/048_hot_path_indexes\.sql` applied/);
+  assert.match(plan, /reopen `\/j\/megathon`/);
+  assert.match(plan, /Apply migrations through `048`/);
+  assert.match(plan, /Run the projector flow: `\/stage\/megathon`/);
+  assert.match(plan, /npm run smoke:json/);
+  assert.match(plan, /local server smoke gate/);
+  assert.match(plan, /REQUIRE_SMOKE_SERVER=1 npm run smoke:json/);
   assert.match(plan, /Critical Findings/);
   assert.match(plan, /Major Findings/);
   assert.match(plan, /Minor Findings/);
@@ -141,7 +203,7 @@ test("readiness report fails missing proof links and passes configured deploy es
     NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
     NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key-not-placeholder",
     MOLLIE_API_KEY: "test_123456789012345678901234567890",
-    NEXT_PUBLIC_BASE_URL: "https://vota.example",
+    NEXT_PUBLIC_BASE_URL: "https://vota.wtf",
     NEXT_PUBLIC_PROOF_REPO_URL: "https://example.com/repo",
     NEXT_PUBLIC_PROOF_POSTS_URL: "https://example.com/posts",
     NEXT_PUBLIC_PROOF_DEMO_URL: "https://example.com/demo",
@@ -154,6 +216,10 @@ test("readiness report fails missing proof links and passes configured deploy es
   assert.equal(ready.ready, true);
   assert.equal(ready.counts.fail, 0);
   assert.ok(ready.counts.warn >= 1);
+
+  const testingRoomReady = buildReadinessReport(store, deployEnv, "testingmiki");
+  assert.equal(testingRoomReady.ready, true);
+  assert.equal(testingRoomReady.counts.fail, 0);
 
   const missingProof = buildReadinessReport(
     store,
@@ -190,7 +256,7 @@ test("readiness report fails missing proof links and passes configured deploy es
   );
 });
 
-test("production readiness rejects local or non-HTTPS public base URLs", () => {
+test("production readiness rejects local non-HTTPS or non-vota public base URLs", () => {
   const store = createSeedStore();
   const deployEnv: Record<string, string | undefined> = {
     NODE_ENV: "production",
@@ -210,7 +276,7 @@ test("production readiness rejects local or non-HTTPS public base URLs", () => {
     NEXT_PUBLIC_PROOF_STAGE_URL: "https://example.com/stage"
   };
 
-  for (const value of ["http://vota.example", "https://[::1]:3000", "https://0.0.0.0:3000"]) {
+  for (const value of ["http://vota.example", "https://vota.example", "https://[::1]:3000", "https://0.0.0.0:3000", "https://vota-demo.vercel.app"]) {
     const report = buildReadinessReport(store, { ...deployEnv, NEXT_PUBLIC_BASE_URL: value }, "megathon-2026");
     assert.ok(
       report.groups
@@ -221,7 +287,7 @@ test("production readiness rejects local or non-HTTPS public base URLs", () => {
   }
 });
 
-test("production readiness requires explicit QR base for long deployed join URLs", () => {
+test("production readiness rejects preview hosts while stage QR stays canonical", () => {
   const store = createSeedStore();
   const deployEnv: Record<string, string | undefined> = {
     NODE_ENV: "production",
@@ -246,30 +312,53 @@ test("production readiness requires explicit QR base for long deployed join URLs
   assert.ok(
     missingQrBase.groups
       .find((group) => group.title === "Runtime")
-      ?.checks.some((item) => item.id === "stage-qr-base" && item.status === "fail")
-  );
-
-  const withQrBase = buildReadinessReport(
-    store,
-    { ...deployEnv, NEXT_PUBLIC_QR_BASE_URL: "https://vota.wtf" },
-    "megathon-2026"
+      ?.checks.some((item) => item.id === "public-base-url" && item.status === "fail")
   );
   assert.ok(
-    withQrBase.groups
+    missingQrBase.groups
       .find((group) => group.title === "Runtime")
       ?.checks.some((item) => item.id === "stage-qr-base" && item.status === "pass")
   );
 
-  const withOverlongQrBase = buildReadinessReport(
+  const canonical = buildReadinessReport(
     store,
-    { ...deployEnv, NEXT_PUBLIC_QR_BASE_URL: `https://${"qr-too-long-".repeat(18)}example.com` },
+    { ...deployEnv, NEXT_PUBLIC_BASE_URL: "https://vota.wtf" },
     "megathon-2026"
   );
   assert.ok(
-    withOverlongQrBase.groups
+    canonical.groups
       .find((group) => group.title === "Runtime")
-      ?.checks.some((item) => item.id === "stage-qr-base" && item.status === "fail")
+      ?.checks.some((item) => item.id === "public-base-url" && item.status === "pass")
   );
+});
+
+test("readiness QR checks use the selected event slug", () => {
+  const store = createSeedStore();
+  const report = buildReadinessReport(
+    store,
+    {
+      NODE_ENV: "production",
+      ADMIN_PASSWORD: "correct horse battery staple",
+      ADMIN_SESSION_SECRET: "a".repeat(48),
+      VOTA_DATA_BACKEND: "supabase",
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_SERVICE_ROLE_KEY: "service-role-key",
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key-not-placeholder",
+      MOLLIE_API_KEY: "test_123456789012345678901234567890",
+      NEXT_PUBLIC_BASE_URL: "https://vota.wtf",
+      NEXT_PUBLIC_PROOF_REPO_URL: "https://example.com/repo",
+      NEXT_PUBLIC_PROOF_POSTS_URL: "https://example.com/posts",
+      NEXT_PUBLIC_PROOF_DEMO_URL: "https://example.com/demo",
+      NEXT_PUBLIC_PROOF_CHECKOUT_URL: "https://example.com/checkout",
+      NEXT_PUBLIC_PROOF_ADMIN_URL: "https://example.com/admin",
+      NEXT_PUBLIC_PROOF_STAGE_URL: "https://example.com/stage"
+    },
+    "testingmiki"
+  );
+  const qrCheck = report.groups.flatMap((group) => group.checks).find((item) => item.id === "stage-qr-base");
+  assert.match(qrCheck?.detail || "", /\/j\/testingmiki/);
+  assert.doesNotMatch(qrCheck?.detail || "", /\/j\/megathon(?:\b|$)/);
 });
 
 test("live readiness fails fake Mollie payment lookup and passes successful smoke read", async () => {
@@ -285,7 +374,7 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key-not-placeholder",
     MOLLIE_API_KEY: "test_123456789012345678901234567890",
     MOLLIE_READINESS_PAYMENT_ID: "tr_1234567890",
-    NEXT_PUBLIC_BASE_URL: "https://vota.example",
+    NEXT_PUBLIC_BASE_URL: "https://vota.wtf",
     NEXT_PUBLIC_PROOF_REPO_URL: "https://example.com/repo",
     NEXT_PUBLIC_PROOF_POSTS_URL: "https://example.com/posts",
     NEXT_PUBLIC_PROOF_DEMO_URL: "https://example.com/demo",
@@ -330,6 +419,7 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     profileLockRpc: true,
     participantEmailColumn: true,
     participantUniqueNameIndex: true,
+    participantUniqueEmailIndex: true,
     poolSettlementRpc: true,
     voidMarketRpc: true,
     transitionMarketRpc: true,
@@ -345,7 +435,22 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     positionsSameEventTrigger: true,
     predictionActionsSameEventTrigger: true,
     stageFeatureNormalizeTrigger: true,
-    ledgerSettlementColumns: true
+    ledgerSettlementColumns: true,
+    repurposedSeedMarket: true,
+    neutralHouseAgentNames: true,
+    roleBattleStageModeRemoved: true,
+    megathonTestingmikiMarketsSeeded: true,
+    checkoutReturnPathScoped: true,
+    participantModerationRpc: true,
+    marketAggregatesPrivate: true,
+    marketAggregatesNotRealtime: true,
+    platformParticipantType: true,
+    platformProvisionLedgerType: true,
+    platformMainAccount: true,
+    platformProvisionSettlement: true,
+    positionsMarketSignalIndex: true,
+    predictionActionsMarketCreatedIndex: true,
+    participantSessionsParticipantActiveIndex: true
   };
   const staleContract = await buildReadinessReportWithLiveChecks(
     store,
@@ -366,12 +471,12 @@ test("live readiness fails fake Mollie payment lookup and passes successful smok
     deployEnv,
     "megathon-2026",
     async () => new Response(JSON.stringify({ status: "paid" }), { status: 200 }),
-    { ...contract, contractVersion: "035_email_unique_names_no_roles" }
+    { ...contract, contractVersion: "048_hot_path_indexes" }
   );
   assert.equal(currentContract.ready, true);
 });
 
-test("production base URL prefers Vercel origin over copied localhost placeholder", () => {
+test("production base URL always uses vota.wtf over Vercel or placeholder origins", () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalBaseUrl = process.env.NEXT_PUBLIC_BASE_URL;
   const originalVercelUrl = process.env.VERCEL_URL;
@@ -380,7 +485,11 @@ test("production base URL prefers Vercel origin over copied localhost placeholde
     mutableEnv.NODE_ENV = "production";
     mutableEnv.NEXT_PUBLIC_BASE_URL = "http://localhost:3000";
     mutableEnv.VERCEL_URL = "vota-demo.vercel.app";
-    assert.equal(baseUrl(), "https://vota-demo.vercel.app");
+    assert.equal(baseUrl(), "https://vota.wtf");
+    mutableEnv.NEXT_PUBLIC_BASE_URL = "https://vota-demo.vercel.app";
+    assert.equal(baseUrl(), "https://vota.wtf");
+    mutableEnv.NEXT_PUBLIC_BASE_URL = "https://vota.example";
+    assert.equal(baseUrl(), "https://vota.wtf");
   } finally {
     if (originalNodeEnv === undefined) delete mutableEnv.NODE_ENV;
     else mutableEnv.NODE_ENV = originalNodeEnv;
@@ -391,7 +500,7 @@ test("production base URL prefers Vercel origin over copied localhost placeholde
   }
 });
 
-test("stage QR join URL falls back to a short QR base when deploy URLs are too long", () => {
+test("stage QR join URL uses vota.wtf in production even on preview deploys", () => {
   const originalBaseUrl = process.env.NEXT_PUBLIC_BASE_URL;
   const originalQrBase = process.env.NEXT_PUBLIC_QR_BASE_URL;
   const originalVercelUrl = process.env.VERCEL_URL;
@@ -399,9 +508,9 @@ test("stage QR join URL falls back to a short QR base when deploy URLs are too l
   const mutableEnv = process.env as Record<string, string | undefined>;
   try {
     mutableEnv.NODE_ENV = "production";
-    mutableEnv.VERCEL_URL = "";
+    mutableEnv.VERCEL_URL = "vota-demo.vercel.app";
     mutableEnv.NEXT_PUBLIC_BASE_URL = `https://${"preview-".repeat(24)}example.vercel.app`;
-    mutableEnv.NEXT_PUBLIC_QR_BASE_URL = "https://vota.wtf";
+    delete mutableEnv.NEXT_PUBLIC_QR_BASE_URL;
     assert.equal(stageJoinUrl("megathon-2026"), "https://vota.wtf/j/megathon-2026");
   } finally {
     if (originalBaseUrl === undefined) delete mutableEnv.NEXT_PUBLIC_BASE_URL;
@@ -415,14 +524,14 @@ test("stage QR join URL falls back to a short QR base when deploy URLs are too l
   }
 });
 
-test("stage QR join URL never silently switches to a default host", () => {
+test("stage QR join URL honors configured hosts outside production", () => {
   const originalBaseUrl = process.env.NEXT_PUBLIC_BASE_URL;
   const originalQrBase = process.env.NEXT_PUBLIC_QR_BASE_URL;
   const originalVercelUrl = process.env.VERCEL_URL;
   const originalNodeEnv = process.env.NODE_ENV;
   const mutableEnv = process.env as Record<string, string | undefined>;
   try {
-    mutableEnv.NODE_ENV = "production";
+    mutableEnv.NODE_ENV = "development";
     mutableEnv.VERCEL_URL = "";
     mutableEnv.NEXT_PUBLIC_BASE_URL = `https://${"preview-".repeat(24)}example.vercel.app`;
     delete mutableEnv.NEXT_PUBLIC_QR_BASE_URL;

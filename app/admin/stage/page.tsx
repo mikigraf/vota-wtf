@@ -1,10 +1,10 @@
 import { AdminLiveRefresh } from "@/components/admin-live-refresh";
 import { AdminNav } from "@/components/admin-nav";
-import { AdminPageHeader, Card, Container, Field, Select, Shell, SubmitButton } from "@/components/ui";
-import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { AdminPageHeader, ButtonLink, Card, Container, Field, Select, Shell, SubmitButton } from "@/components/ui";
+import { resolveAdminEvent } from "@/lib/admin-events";
 import { readDataStore } from "@/lib/data";
 import { firstSearchParam } from "@/lib/search-params";
-import { getEventOrThrow } from "@/lib/store";
+import { baseUrl } from "@/lib/utils";
 import type { StageMode } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,6 @@ export const dynamic = "force-dynamic";
 const modes: Array<{ value: StageMode; label: string }> = [
   { value: "join", label: "Join QR mode" },
   { value: "live", label: "Live market mode" },
-  { value: "role_battle", label: "Role battle mode" },
   { value: "humans_vs_agents", label: "Humans vs Agents mode" },
   { value: "leaderboard", label: "Leaderboard mode" },
   { value: "resolution", label: "Resolution reveal mode" }
@@ -21,19 +20,29 @@ const modes: Array<{ value: StageMode; label: string }> = [
 export default async function StageAdminPage({ searchParams }: { searchParams: Promise<{ error?: string | string[]; eventSlug?: string | string[] }> }) {
   const params = await searchParams;
   const error = firstSearchParam(params.error);
-  const eventSlug = firstSearchParam(params.eventSlug) || DEFAULT_EVENT_SLUG;
   const store = await readDataStore();
-  const event = getEventOrThrow(store, eventSlug);
+  const { event, requestedSlug, usedFallback } = resolveAdminEvent(store, firstSearchParam(params.eventSlug));
+  if (!event) {
+    return (
+      <Shell className="bg-admin">
+        <Container className="grid gap-6">
+          <AdminNav />
+          <Card>No events are configured yet.</Card>
+        </Container>
+      </Shell>
+    );
+  }
   const markets = store.markets.filter((market) =>
     market.eventId === event.id && market.status !== "draft" && market.status !== "voided" && market.showOnStage
   );
   const activeStageMarkets = markets.filter((market) => market.status !== "resolved");
   const resolvedMarkets = markets.filter((market) => market.status === "resolved");
+  const stageUrl = `${baseUrl().replace(/\/$/, "")}/stage/${event.slug}`;
   const stageWarning =
     markets.length === 0
       ? "No stage-visible markets are available yet. Open a market and keep Show on stage enabled before switching to a market mode."
       : activeStageMarkets.length === 0
-        ? "Live, role battle, and humans-vs-agents modes need an open or locked stage-visible market."
+        ? "Live and humans-vs-agents modes need an open or locked stage-visible market."
       : resolvedMarkets.length === 0
         ? "Resolution reveal becomes available after a market is resolved."
         : "";
@@ -43,10 +52,17 @@ export default async function StageAdminPage({ searchParams }: { searchParams: P
         <AdminNav eventSlug={event.slug} />
         <AdminPageHeader kicker="Big screen controls" title="Stage">
           <AdminLiveRefresh />
+          <ButtonLink href={`/stage/${event.slug}`} variant="secondary">Stage screen</ButtonLink>
         </AdminPageHeader>
+        {usedFallback ? (
+          <Card className="border-warn bg-warn/15">
+            <p className="text-sm font-bold text-ink">Event not found: {requestedSlug}. Showing {event.name} instead.</p>
+          </Card>
+        ) : null}
         <Card className="bg-paper">
           <p className="text-sm font-bold text-muted">Operating on event</p>
           <h2 className="mt-1 text-xl font-black">{event.name}</h2>
+          <p className="mt-2 break-all font-mono-vota text-xs font-bold text-ink">{stageUrl}</p>
           <p className="mt-1 text-xs font-semibold text-muted">Use the event control room for event-specific market setup and one-click stage actions.</p>
         </Card>
         {error ? (
@@ -79,7 +95,7 @@ export default async function StageAdminPage({ searchParams }: { searchParams: P
               ))}
             </Select>
               <span className="text-xs font-semibold text-muted">
-                Live/role modes use open or locked markets. Resolution mode uses resolved markets.
+                Live and humans-vs-agents modes use open or locked markets. Resolution mode uses resolved markets.
               </span>
               {stageWarning ? <span className="text-xs font-semibold text-muted">{stageWarning}</span> : null}
             </Field>

@@ -1,3 +1,4 @@
+import { DEFAULT_EVENT_SLUG } from "./constants";
 import { participantReceipt } from "./store";
 import type { Store } from "./types";
 import { credits, pct } from "./utils";
@@ -12,18 +13,32 @@ export interface ReceiptPromo {
   status: "ready" | "pending";
   title: string;
   subtitle: string;
+  eventSlug: string;
   frames: ReceiptPromoFrame[];
   shareCopy: string;
   pixVersePrompt: string;
 }
 
+export function eventSlugForReceipt(store: Store, receipt: ReturnType<typeof participantReceipt>) {
+  const eventId = receipt?.market?.eventId || receipt?.participant?.eventId;
+  return (
+    store.events.find((event) => event.id === eventId)?.slug ||
+    store.events.find((event) => event.slug === DEFAULT_EVENT_SLUG)?.slug ||
+    store.events[0]?.slug ||
+    DEFAULT_EVENT_SLUG
+  );
+}
+
 export function buildReceiptPromo(store: Store, receiptId: string): ReceiptPromo {
   const receipt = participantReceipt(store, receiptId, receiptId);
+  const eventSlug = eventSlugForReceipt(store, receipt);
+  const eventName = store.events.find((event) => event.slug === eventSlug)?.name || eventSlug;
   if (!receipt?.market || !receipt.outcome) {
     return {
       status: "pending",
       title: "Receipt pending",
       subtitle: "Resolve a correct prediction before this cut can publish.",
+      eventSlug,
       frames: [
         {
           kicker: "vota.wtf",
@@ -36,9 +51,9 @@ export function buildReceiptPromo(store: Store, receiptId: string): ReceiptPromo
           detail: "Oracle Score appears after resolution."
         }
       ],
-      shareCopy: "I locked my MEGATHON take on vota.wtf.",
+      shareCopy: `I locked my ${eventName} take on vota.wtf.`,
       pixVersePrompt:
-        "Create a short event teaser for vota.wtf: QR scan, prediction card, stage signal bars, then a pending receipt waiting for the reveal."
+        `Create a short event teaser for vota.wtf at ${eventName}: QR scan, prediction card, stage signal bars, then a pending receipt waiting for the reveal.`
     };
   }
 
@@ -50,6 +65,7 @@ export function buildReceiptPromo(store: Store, receiptId: string): ReceiptPromo
     status: "ready",
     title,
     subtitle: `${receipt.outcome.label} on ${receipt.market.title}`,
+    eventSlug,
     frames: [
       {
         kicker: "The call",
@@ -57,7 +73,7 @@ export function buildReceiptPromo(store: Store, receiptId: string): ReceiptPromo
         detail: `${participant} backed it before the room moved.`
       },
       {
-        kicker: "At lock time",
+        kicker: "At call time",
         headline: `${rarity} people signal`,
         detail: "The take landed before consensus became obvious."
       },
@@ -69,8 +85,8 @@ export function buildReceiptPromo(store: Store, receiptId: string): ReceiptPromo
     ],
     shareCopy: `${participant} called ${receipt.outcome.label} early on vota.wtf and earned +${score} Oracle Score. You saw it first.`,
     pixVersePrompt:
-      `Create a 9:16 animated receipt for vota.wtf. Start with a MEGATHON stage signal, show ${participant}'s prediction for ` +
-      `${receipt.outcome.label}, reveal that only ${rarity} backed it at lock time, then end on +${score} Oracle Score. ` +
+      `Create a 9:16 animated receipt for vota.wtf. Start with a ${eventName} stage signal, show ${participant}'s prediction for ` +
+      `${receipt.outcome.label}, reveal that only ${rarity} backed it when they made the call, then end on +${score} Oracle Score. ` +
       "Use crisp UI overlays, energetic stage lighting, and reputation-only language."
   };
 }

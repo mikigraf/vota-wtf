@@ -2,15 +2,10 @@ import { NextRequest } from "next/server";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { updateStageControlsData } from "@/lib/data";
 import { adminActionError, clientIpFromRequest, json, requireAdminRequest } from "@/lib/http";
+import { safeAdminReturnPath } from "@/lib/safe-paths";
 import type { StageMode } from "@/lib/types";
 
-const modes: StageMode[] = ["join", "live", "role_battle", "humans_vs_agents", "leaderboard", "resolution"];
-
-function safeAdminReturnPath(value: string) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "/admin/stage";
-  if (!value.startsWith("/admin") || value.startsWith("/admin/login") || value.startsWith("/api")) return "/admin/stage";
-  return value;
-}
+const modes: StageMode[] = ["join", "live", "humans_vs_agents", "leaderboard", "resolution"];
 
 export async function POST(request: NextRequest) {
   const unauthorized = await requireAdminRequest(request);

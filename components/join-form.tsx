@@ -2,6 +2,11 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import type { FormEvent } from "react";
+import { safeParticipantNextPath } from "@/lib/safe-paths";
+
+type InputChangeEvent = { currentTarget: HTMLInputElement };
+type ResizeSource = { image: CanvasImageSource; width: number; height: number; close?: () => void };
 
 type JoinFormProps = {
   eventSlug: string;
@@ -12,25 +17,45 @@ type JoinFormProps = {
 };
 
 async function resizeImage(file: File) {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 512 / Math.max(bitmap.width, bitmap.height));
+  const source = await loadImageSource(file);
+  const scale = Math.min(1, 512 / Math.max(source.width, source.height));
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
-  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  canvas.width = Math.max(1, Math.round(source.width * scale));
+  canvas.height = Math.max(1, Math.round(source.height * scale));
   const context = canvas.getContext("2d");
   if (!context) return "";
-  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  context.drawImage(source.image, 0, 0, canvas.width, canvas.height);
+  source.close?.();
   return canvas.toDataURL("image/webp", 0.82);
+}
+
+async function loadImageSource(file: File): Promise<ResizeSource> {
+  if (typeof createImageBitmap === "function") {
+    const bitmap = await createImageBitmap(file);
+    return { image: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() };
+  }
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.decoding = "async";
+    image.src = objectUrl;
+    const decode = image.decode;
+    if (typeof decode === "function") {
+      await decode.call(image);
+    } else {
+      await new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve();
+        image.onerror = () => reject(new Error("Could not read this image."));
+      });
+    }
+    return { image, width: image.naturalWidth || image.width, height: image.naturalHeight || image.height };
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function initialName(value?: string) {
   if (!value || value === "oracle") return "";
-  return value;
-}
-
-function safeClientNextPath(value?: string) {
-  if (!value || !value.startsWith("/") || value.startsWith("//")) return "";
-  if (value.startsWith("/admin") || value.startsWith("/api")) return "";
   return value;
 }
 
@@ -62,7 +87,7 @@ export function JoinForm({
     }
   }
 
-  async function submit(event: React.FormEvent) {
+  async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError("");
@@ -74,14 +99,25 @@ export function JoinForm({
       });
       const initData = await initResponse.json().catch(() => ({}));
       if (!initResponse.ok) throw new Error(initData.error || "Could not start this event session.");
+      const recoveredNext = safeParticipantNextPath(nextPath) || (initData.nextMarketId ? `/m/${initData.nextMarketId}` : `/e/${eventSlug}`);
+      if (initData.profileComplete) {
+        router.push(recoveredNext);
+        router.refresh();
+        return;
+      }
       const response = await fetch("/api/session/profile", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ nickname, email, avatarDataUrl: newAvatarDataUrl })
       });
       const data = await response.json();
+      if (response.status === 409 && /locked after entering/i.test(String(data.error || ""))) {
+        router.push(recoveredNext);
+        router.refresh();
+        return;
+      }
       if (!response.ok) throw new Error(data.error || "Could not join.");
-      const safeNext = safeClientNextPath(nextPath);
+      const safeNext = safeParticipantNextPath(nextPath);
       router.push(safeNext || (data.nextMarketId ? `/m/${data.nextMarketId}` : `/e/${eventSlug}`));
       router.refresh();
     } catch (err) {
@@ -98,7 +134,7 @@ export function JoinForm({
         <input
           className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
           value={nickname}
-          onChange={(event: any) => setNickname(event.target.value)}
+          onChange={(event: InputChangeEvent) => setNickname(event.currentTarget.value)}
           maxLength={24}
           placeholder="Your name or team handle"
           required
@@ -110,7 +146,7 @@ export function JoinForm({
           className="focus-ring min-h-12 rounded-xl border-[1.5px] border-line px-3.5 font-semibold"
           type="email"
           value={email}
-          onChange={(event: any) => setEmail(event.target.value)}
+          onChange={(event: InputChangeEvent) => setEmail(event.currentTarget.value)}
           maxLength={254}
           autoComplete="email"
           placeholder="you@example.com"
@@ -133,7 +169,7 @@ export function JoinForm({
             className="focus-ring rounded-xl border-[1.5px] border-dashed border-line bg-paper p-3 text-sm font-semibold"
             type="file"
             accept="image/*"
-            onChange={(event: any) => onFile(event.target.files?.[0])}
+            onChange={(event: InputChangeEvent) => onFile(event.currentTarget.files?.[0])}
           />
         </label>
         {avatarPreviewUrl ? (
@@ -150,7 +186,7 @@ export function JoinForm({
           className="focus-ring rounded-xl border-[1.5px] border-dashed border-line bg-paper p-3 text-sm font-semibold"
           type="file"
           accept="image/*"
-          onChange={(event: any) => onFile(event.target.files?.[0])}
+          onChange={(event: InputChangeEvent) => onFile(event.currentTarget.files?.[0])}
         />
       </label>
       {avatarPreviewUrl ? (

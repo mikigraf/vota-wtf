@@ -16,7 +16,7 @@ export function AdminEventSwitcher({
 
   function switchEvent(slug: string) {
     if (!slug) return;
-    if (pathname.startsWith("/admin/events/")) {
+    if (pathname === "/admin/events" || pathname.startsWith("/admin/events/")) {
       router.push(`/admin/events/${encodeURIComponent(slug)}`);
       return;
     }
@@ -35,7 +35,7 @@ export function AdminEventSwitcher({
       <select
         className="focus-ring min-h-9 max-w-[180px] rounded-lg border border-white/20 bg-ink px-2 text-sm font-bold normal-case text-white"
         value={currentEventSlug || events[0]?.slug || ""}
-        onChange={(event: any) => switchEvent(event.target.value)}
+        onChange={(event: { currentTarget: HTMLSelectElement }) => switchEvent(event.currentTarget.value)}
       >
         {events.map((event) => (
           <option key={event.slug} value={event.slug}>

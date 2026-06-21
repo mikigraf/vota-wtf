@@ -1,24 +1,8 @@
 import { NextRequest } from "next/server";
-import { readDataStore } from "@/lib/data";
+import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { readDataStore, scopedCheckoutReturnPathData } from "@/lib/data";
 import { badRequest, clientIpFromRequest, json, readJsonObject } from "@/lib/http";
 import { verifyAndCreditPurchase } from "@/lib/payments";
-
-function safeReturnTo(value: unknown, eventSlug: string) {
-  const fallback = `/e/${eventSlug}`;
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 240 || !trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.includes("\\")) {
-    return fallback;
-  }
-  try {
-    const url = new URL(trimmed, "https://vota.local");
-    if (url.origin !== "https://vota.local") return fallback;
-    url.searchParams.delete("checkout");
-    return `${url.pathname}${url.search}`;
-  } catch {
-    return fallback;
-  }
-}
 
 export async function POST(request: NextRequest) {
   const contentType = request.headers.get("content-type") || "";
@@ -35,7 +19,7 @@ export async function POST(request: NextRequest) {
       const current = await readDataStore();
       const participant = current.participants.find((item) => item.id === result.purchase.participantId);
       const event = current.events.find((item) => item.id === participant?.eventId);
-      const returnTo = safeReturnTo(payload.returnTo, event?.slug || "megathon-2026");
+      const returnTo = await scopedCheckoutReturnPathData(payload.returnTo, event?.slug || DEFAULT_EVENT_SLUG);
       const separator = returnTo.includes("?") ? "&" : "?";
       return Response.redirect(new URL(`${returnTo}${separator}checkout=${encodeURIComponent(result.purchase.id)}`, request.url), 303);
     }

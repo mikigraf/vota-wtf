@@ -1,14 +1,30 @@
 import { NextRequest } from "next/server";
-import { getMcpSessionParticipantData, placePredictionData, readDataStore, verifyMcpWriteTokenData } from "@/lib/data";
+import {
+  findEventByIdData,
+  findEventBySlugData,
+  getMcpSessionParticipantData,
+  placePredictionData,
+  readPublicEventStoreData,
+  readPublicMarketStoreData,
+  verifyMcpWriteTokenData
+} from "@/lib/data";
 import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { badRequest, json } from "@/lib/http";
+import { hasCompletedProfile } from "@/lib/participants";
 import { calculateAllowedStake, publicMarketState } from "@/lib/store";
+import { CANONICAL_PUBLIC_BASE_URL } from "@/lib/utils";
+
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const SUPPORTED_PROTOCOL_VERSIONS = new Set([MCP_PROTOCOL_VERSION, "2025-03-26"]);
 
 type JsonRpcId = string | number | null;
 type JsonRecord = Record<string, unknown>;
+type RpcDispatch =
+  | { kind: "empty"; status?: number; headers?: HeadersInit }
+  | { kind: "json"; body: unknown; status?: number; headers?: HeadersInit };
 
 class ToolCallError extends Error {
   status: number;
@@ -98,7 +114,9 @@ const toolDefinitions = [
     description: "Explains how the participant can get more test MegaBucks inside the event app.",
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        eventSlug: { type: "string", description: "Optional event slug for unauthenticated budget guidance." }
+      },
       additionalProperties: false
     },
     annotations: { readOnlyHint: true }
@@ -144,10 +162,10 @@ function integerArg(body: JsonRecord, name: string) {
 function allowedOrigins(request: NextRequest) {
   const origins = new Set<string>([request.nextUrl.origin]);
   for (const value of [
+    CANONICAL_PUBLIC_BASE_URL,
     process.env.NEXT_PUBLIC_BASE_URL,
     process.env.APP_URL,
-    process.env.WEBHOOK_BASE_URL,
-    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : undefined
+    process.env.WEBHOOK_BASE_URL
   ]) {
     if (value) origins.add(value.replace(/\/$/, ""));
   }
@@ -182,6 +200,7 @@ function corsHeaders(request: NextRequest) {
   }
   headers.set("Access-Control-Allow-Methods", "POST, GET, DELETE, OPTIONS");
   headers.set("Access-Control-Allow-Headers", "Accept, Authorization, Content-Type, Idempotency-Key, Mcp-Protocol-Version, Mcp-Session-Id, X-Idempotency-Key");
+  headers.set("Access-Control-Expose-Headers", "Mcp-Session-Id");
   return headers;
 }
 
@@ -199,7 +218,89 @@ function emptyResponse(request: NextRequest, init: ResponseInit = {}) {
 }
 
 function methodNotAllowed(request: NextRequest) {
-  return emptyResponse(request, { status: 405, headers: { Allow: "POST, OPTIONS" } });
+  return emptyResponse(request, { status: 405, headers: { Allow: "POST, GET, DELETE, OPTIONS" } });
+}
+
+function accepts(request: NextRequest, contentType: string) {
+  const accept = request.headers.get("accept") || "";
+  if (!accept || accept.includes("*/*")) return true;
+  return accept
+    .split(",")
+    .map((part) => part.split(";")[0]?.trim().toLowerCase())
+    .some((part) => part === contentType);
+}
+
+function mcpAcceptResponse(request: NextRequest, method: "GET" | "POST") {
+  if (method === "GET") {
+    if (accepts(request, "text/event-stream")) return null;
+    return responseJson(request, { error: "MCP Streamable HTTP GET requires Accept: text/event-stream." }, { status: 406 });
+  }
+  if (accepts(request, "application/json") && accepts(request, "text/event-stream")) return null;
+  return responseJson(
+    request,
+    rpcError(null, -32000, "MCP Streamable HTTP POST requires Accept: application/json, text/event-stream."),
+    { status: 406 }
+  );
+}
+
+function contentTypeResponse(request: NextRequest) {
+  const contentType = request.headers.get("content-type") || "";
+  if (contentType.toLowerCase().includes("application/json")) return null;
+  return responseJson(request, rpcError(null, -32000, "MCP Streamable HTTP POST requires Content-Type: application/json."), {
+    status: 415
+  });
+}
+
+function mcpSessionId(request: NextRequest) {
+  const existing = request.headers.get("mcp-session-id")?.trim();
+  if (existing) return existing.slice(0, 128);
+  const randomValue =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  return `vota_${randomValue.replace(/[^a-zA-Z0-9._-]/g, "_")}`;
+}
+
+function sseResponse(request: NextRequest) {
+  const headers = corsHeaders(request);
+  headers.set("Content-Type", "text/event-stream; charset=utf-8");
+  headers.set("Cache-Control", "no-cache, no-transform");
+  headers.set("Connection", "keep-alive");
+  headers.set("X-Accel-Buffering", "no");
+  const encoder = new TextEncoder();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const write = (chunk: string) => controller.enqueue(encoder.encode(chunk));
+      write(": vota.wtf MCP stream ready\n\n");
+      timer = setInterval(() => {
+        try {
+          write(`: ping ${Date.now()}\n\n`);
+        } catch {
+          if (timer) clearInterval(timer);
+        }
+      }, 25000);
+      request.signal.addEventListener("abort", () => {
+        if (timer) clearInterval(timer);
+        try {
+          controller.close();
+        } catch {
+          // The client may have already closed the stream.
+        }
+      });
+    },
+    cancel() {
+      if (timer) clearInterval(timer);
+    }
+  });
+  return new Response(stream, { status: 200, headers });
+}
+
+function dispatchResponse(request: NextRequest, dispatch: RpcDispatch) {
+  if (dispatch.kind === "empty") {
+    return emptyResponse(request, { status: dispatch.status || 202, headers: dispatch.headers });
+  }
+  return responseJson(request, dispatch.body, { status: dispatch.status || 200, headers: dispatch.headers });
 }
 
 function rpcError(id: JsonRpcId, code: number, message: string, data?: unknown) {
@@ -243,21 +344,26 @@ function supportedTool(name: string) {
 
 async function runTool(request: NextRequest, tool: string, args: JsonRecord) {
   const body = args;
-  const store = await readDataStore();
   const session = await getMcpSessionParticipantData(request);
   const requestedEventSlug = typeof body.eventSlug === "string" ? body.eventSlug.trim() : "";
   const readOnlyEventSlug = requestedEventSlug || process.env.NEXT_PUBLIC_EVENT_SLUG || DEFAULT_EVENT_SLUG;
-  const readOnlyEvent = store.events.find((event) => event.slug === readOnlyEventSlug);
-  const visibleEventId = session?.participant.eventId || readOnlyEvent?.id;
-  const visibleOpenMarkets = store.markets.filter((market) => {
-    return market.status === "open" && Boolean(visibleEventId) && market.eventId === visibleEventId;
-  });
+  const visibleEventForRequest = () => session
+    ? findEventByIdData(session.participant.eventId)
+    : findEventBySlugData(readOnlyEventSlug);
   if (tool === "list_markets") {
+    const visibleEvent = await visibleEventForRequest();
+    if (!visibleEvent) return { markets: [] };
+    const store = await readPublicEventStoreData(visibleEvent.slug, session?.session.id);
+    const visibleOpenMarkets = store.markets.filter((market) => market.status === "open" && market.eventId === visibleEvent.id);
     return { markets: visibleOpenMarkets.map((market) => publicMarketState(store, market)) };
   }
   if (tool === "get_market") {
-    const market = visibleOpenMarkets.find((item) => item.id === body.marketId);
-    if (!market) throw new ToolCallError("Market not found.", 404);
+    const marketId = stringArg(body, "marketId");
+    const store = await readPublicMarketStoreData(marketId, session?.session.id);
+    const market = store.markets.find((item) => item.id === marketId && item.status === "open");
+    const event = market ? store.events.find((item) => item.id === market.eventId) : undefined;
+    const allowedEvent = session ? market?.eventId === session.participant.eventId : event?.slug === readOnlyEventSlug;
+    if (!market || !allowedEvent) throw new ToolCallError("Market not found.", 404);
     return { market: publicMarketState(store, market) };
   }
 
@@ -267,16 +373,27 @@ async function runTool(request: NextRequest, tool: string, args: JsonRecord) {
   }
   if (tool === "calculate_allowed_stake") {
     if (!session) throw new ToolCallError("Session or participant-scoped MCP token required.", 401);
+    if (session.participant.participantType === "human" && !hasCompletedProfile(session.participant)) {
+      throw new ToolCallError("Finish your profile before predicting.", 401);
+    }
+    const marketId = stringArg(body, "marketId");
+    const outcomeId = stringArg(body, "outcomeId");
+    const store = await readPublicMarketStoreData(marketId, session.session.id);
+    const market = store.markets.find((item) => item.id === marketId && item.status === "open" && item.eventId === session.participant.eventId);
+    if (!market) throw new ToolCallError("Market not found.", 404);
     return {
       allowed: calculateAllowedStake(store, {
         participantId: session.participant.id,
-        marketId: stringArg(body, "marketId"),
-        outcomeId: stringArg(body, "outcomeId")
+        marketId,
+        outcomeId
       })
     };
   }
   if (tool === "place_prediction") {
     if (!session) throw new ToolCallError("Session or participant-scoped MCP token required.", 401);
+    if (session.participant.participantType === "human" && !hasCompletedProfile(session.participant)) {
+      throw new ToolCallError("Finish your profile before predicting.", 401);
+    }
     if (!(await verifyMcpWriteTokenData(request, session.participant.id))) {
       throw new ToolCallError("MCP write token required.", 401);
     }
@@ -290,7 +407,10 @@ async function runTool(request: NextRequest, tool: string, args: JsonRecord) {
     return { result };
   }
   if (tool === "request_more_budget") {
-    return { message: "Use the MEGATHON test checkout in the app for +100 MBucks. No real charge; MegaBucks stay inside vota.wtf." };
+    const visibleEvent = await visibleEventForRequest();
+    return {
+      message: `Use the ${visibleEvent?.name || "event"} test checkout in the app for +100 MBucks. No real charge; MegaBucks stay inside vota.wtf.`
+    };
   }
   throw new ToolCallError("Unsupported MCP tool.", 404);
 }
@@ -309,38 +429,42 @@ function validJsonRpcId(value: unknown): value is JsonRpcId {
   return value === null || typeof value === "string" || (typeof value === "number" && Number.isFinite(value));
 }
 
-async function handleJsonRpc(request: NextRequest, body: JsonRecord) {
+async function dispatchJsonRpc(request: NextRequest, body: JsonRecord): Promise<RpcDispatch> {
   const hasId = Object.prototype.hasOwnProperty.call(body, "id");
   const id = validJsonRpcId(body.id) ? body.id : null;
   if (body.jsonrpc !== "2.0" || typeof body.method !== "string" || (hasId && !validJsonRpcId(body.id))) {
-    return responseJson(request, rpcError(id, -32600, "Invalid Request"), { status: 400 });
+    return { kind: "json", body: rpcError(id, -32600, "Invalid Request"), status: 400 };
   }
 
-  if (!hasId) return emptyResponse(request, { status: 202 });
+  if (!hasId) return { kind: "empty", status: 202 };
 
   if (body.method === "initialize") {
     const params = isRecord(body.params) ? body.params : {};
     const requestedVersion = typeof params.protocolVersion === "string" ? params.protocolVersion : MCP_PROTOCOL_VERSION;
-    return responseJson(request, rpcResult(id, {
-      protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requestedVersion) ? requestedVersion : MCP_PROTOCOL_VERSION,
-      capabilities: {
-        tools: { listChanged: false }
-      },
-      serverInfo: {
-        name: "vota-wtf",
-        title: "vota.wtf Prediction Markets",
-        version: "7.0.0"
-      },
-      instructions: "Use list_markets and calculate_allowed_stake before place_prediction. place_prediction requires a participant-scoped MCP bearer token and a stable requestId/idempotencyKey for retry safety."
-    }));
+    return {
+      kind: "json",
+      headers: { "Mcp-Session-Id": mcpSessionId(request) },
+      body: rpcResult(id, {
+        protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requestedVersion) ? requestedVersion : MCP_PROTOCOL_VERSION,
+        capabilities: {
+          tools: { listChanged: false }
+        },
+        serverInfo: {
+          name: "vota-wtf",
+          title: "vota.wtf Prediction Markets",
+          version: "7.0.0"
+        },
+        instructions: "Use list_markets and calculate_allowed_stake before place_prediction. place_prediction requires a participant-scoped MCP bearer token and a stable requestId/idempotencyKey for retry safety."
+      })
+    };
   }
 
   if (body.method === "ping") {
-    return responseJson(request, rpcResult(id, {}));
+    return { kind: "json", body: rpcResult(id, {}) };
   }
 
   if (body.method === "tools/list") {
-    return responseJson(request, rpcResult(id, { tools: toolDefinitions }));
+    return { kind: "json", body: rpcResult(id, { tools: toolDefinitions }) };
   }
 
   if (body.method === "tools/call") {
@@ -348,17 +472,47 @@ async function handleJsonRpc(request: NextRequest, body: JsonRecord) {
     const name = typeof params.name === "string" ? params.name : "";
     const args = isRecord(params.arguments) ? params.arguments : {};
     if (!supportedTool(name)) {
-      return responseJson(request, rpcError(id, -32602, `Unknown tool: ${name || "missing tool name"}`), { status: 400 });
+      return { kind: "json", body: rpcError(id, -32602, `Unknown tool: ${name || "missing tool name"}`), status: 400 };
     }
     try {
-      return responseJson(request, rpcResult(id, toolResult(await runTool(request, name, args))));
+      return { kind: "json", body: rpcResult(id, toolResult(await runTool(request, name, args))) };
     } catch (error) {
       const message = error instanceof Error ? error.message : "Tool call failed.";
-      return responseJson(request, rpcResult(id, toolError(message)));
+      return { kind: "json", body: rpcResult(id, toolError(message)) };
     }
   }
 
-  return responseJson(request, rpcError(id, -32601, `Method not found: ${body.method}`), { status: 404 });
+  return { kind: "json", body: rpcError(id, -32601, `Method not found: ${body.method}`), status: 404 };
+}
+
+async function handleJsonRpc(request: NextRequest, body: JsonRecord) {
+  return dispatchResponse(request, await dispatchJsonRpc(request, body));
+}
+
+async function handleJsonRpcBatch(request: NextRequest, batch: unknown[]) {
+  if (batch.length === 0) {
+    return responseJson(request, rpcError(null, -32600, "Invalid Request"), { status: 400 });
+  }
+  const responses: unknown[] = [];
+  let status = 200;
+  const headers = new Headers();
+  for (const item of batch) {
+    if (!isRecord(item)) {
+      responses.push(rpcError(null, -32600, "Invalid Request"));
+      status = Math.max(status, 400);
+      continue;
+    }
+    const dispatch = await dispatchJsonRpc(request, item);
+    if (dispatch.headers) {
+      for (const [key, value] of new Headers(dispatch.headers)) headers.set(key, value);
+    }
+    if (dispatch.kind === "json") {
+      responses.push(dispatch.body);
+      status = Math.max(status, dispatch.status || 200);
+    }
+  }
+  if (responses.length === 0) return emptyResponse(request, { status: 202, headers });
+  return responseJson(request, responses, { status, headers });
 }
 
 function protocolVersionResponse(request: NextRequest) {
@@ -374,24 +528,37 @@ export async function OPTIONS(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   if (!isAllowedOrigin(request)) return responseJson(request, { error: "Forbidden origin." }, { status: 403 });
-  return methodNotAllowed(request);
+  const badProtocol = protocolVersionResponse(request);
+  if (badProtocol) return badProtocol;
+  const badAccept = mcpAcceptResponse(request, "GET");
+  if (badAccept) return badAccept;
+  return sseResponse(request);
 }
 
 export async function DELETE(request: NextRequest) {
   if (!isAllowedOrigin(request)) return responseJson(request, { error: "Forbidden origin." }, { status: 403 });
-  return methodNotAllowed(request);
+  const badProtocol = protocolVersionResponse(request);
+  if (badProtocol) return badProtocol;
+  return emptyResponse(request, { status: 202 });
 }
 
 export async function POST(request: NextRequest) {
   if (!isAllowedOrigin(request)) return responseJson(request, { error: "Forbidden origin." }, { status: 403 });
   const badProtocol = protocolVersionResponse(request);
   if (badProtocol) return badProtocol;
+  const badAccept = mcpAcceptResponse(request, "POST");
+  if (badAccept) return badAccept;
+  const badContentType = contentTypeResponse(request);
+  if (badContentType) return badContentType;
 
   let body: unknown;
   try {
     body = await request.json();
   } catch {
     return responseJson(request, rpcError(null, -32700, "Parse error"), { status: 400 });
+  }
+  if (Array.isArray(body)) {
+    return handleJsonRpcBatch(request, body);
   }
   if (!isRecord(body)) {
     return responseJson(request, rpcError(null, -32600, "Invalid Request"), { status: 400 });

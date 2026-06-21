@@ -8,34 +8,17 @@ import {
   findReusablePendingPurchaseData,
   getSessionParticipantData,
   linkCheckoutIntentPurchaseData,
-  recordCheckoutIntentData
+  recordCheckoutIntentData,
+  scopedCheckoutReturnPathData
 } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
 import { hasCompletedProfile } from "@/lib/participants";
 import { verifyAndCreditPurchase } from "@/lib/payments";
 import { baseUrl } from "@/lib/utils";
 
-function safeReturnTo(value: unknown, eventSlug: string) {
-  const fallback = `/e/${eventSlug}`;
-  if (typeof value !== "string") return fallback;
-  const trimmed = value.trim();
-  if (!trimmed || trimmed.length > 240 || !trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.includes("\\")) {
-    return fallback;
-  }
-  try {
-    const url = new URL(trimmed, "https://vota.local");
-    if (url.origin !== "https://vota.local") return fallback;
-    url.searchParams.delete("checkout");
-    return `${url.pathname}${url.search}`;
-  } catch {
-    return fallback;
-  }
-}
-
 function returnUrl(purchaseId: string, eventSlug: string, returnTo: string) {
-  const path = safeReturnTo(returnTo, eventSlug);
-  const separator = path.includes("?") ? "&" : "?";
-  return `${baseUrl()}${path}${separator}checkout=${encodeURIComponent(purchaseId)}`;
+  const separator = returnTo.includes("?") ? "&" : "?";
+  return `${baseUrl()}${returnTo}${separator}checkout=${encodeURIComponent(purchaseId)}`;
 }
 
 async function createMolliePayment(purchaseId: string, eventSlug: string, returnTo: string) {
@@ -45,7 +28,7 @@ async function createMolliePayment(purchaseId: string, eventSlug: string, return
     throw new Error("MOLLIE_API_KEY must be configured in production test mode.");
   }
   if (!key) {
-    const localReturnTo = encodeURIComponent(safeReturnTo(returnTo, eventSlug));
+    const localReturnTo = encodeURIComponent(returnTo);
     return {
       molliePaymentId: `local_${purchaseId}`,
       checkoutUrl: `${baseUrl()}/checkout/test/${purchaseId}?returnTo=${localReturnTo}`
@@ -60,7 +43,7 @@ async function createMolliePayment(purchaseId: string, eventSlug: string, return
     },
     body: JSON.stringify({
       amount: { currency: "EUR", value: TEST_CHECKOUT_EUR.toFixed(2) },
-      description: "vota.wtf MEGATHON test MegaBucks",
+      description: `vota.wtf ${eventSlug} test MegaBucks`,
       redirectUrl: returnUrl(purchaseId, eventSlug, returnTo),
       webhookUrl: `${baseUrl()}/api/payments/mollie/webhook`,
       metadata: { purchaseId, testOnly: true }
@@ -69,9 +52,11 @@ async function createMolliePayment(purchaseId: string, eventSlug: string, return
   });
   if (!response.ok) throw new Error("Mollie test checkout could not be created.");
   const data = await response.json();
+  const checkoutUrl = String(data._links?.checkout?.href || "");
+  if (!checkoutUrl.startsWith("https://")) throw new Error("Mollie checkout URL was not returned.");
   return {
     molliePaymentId: data.id as string,
-    checkoutUrl: data._links?.checkout?.href as string
+    checkoutUrl
   };
 }
 
@@ -85,9 +70,9 @@ export async function POST(request: NextRequest) {
     const event = await findEventByIdData(session.participant.eventId);
     if (!event) return badRequest("Event not found.", 404);
     if (event.emergencyPaused) return badRequest("The arena is paused by the organizer.", 423);
-    const returnTo = safeReturnTo(body.returnTo, event.slug);
+    const returnTo = await scopedCheckoutReturnPathData(body.returnTo, event.slug);
     await recordCheckoutIntentData(session.participant.id);
-    const reusable = await findReusablePendingPurchaseData(session.participant.id);
+    const reusable = await findReusablePendingPurchaseData(session.participant.id, returnTo);
     if (reusable) {
       const verified = await verifyAndCreditPurchase(reusable);
       if (verified.purchase.status === "pending" && verified.purchase.checkoutUrl) {
@@ -99,7 +84,7 @@ export async function POST(request: NextRequest) {
         });
       }
     }
-    const purchase = await createOrReusePendingPurchaseData(session.participant.id);
+    const purchase = await createOrReusePendingPurchaseData(session.participant.id, returnTo);
     if (purchase.checkoutUrl) {
       await linkCheckoutIntentPurchaseData(session.participant.id, purchase.id);
       return json({

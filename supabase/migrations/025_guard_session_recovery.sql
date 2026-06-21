@@ -65,7 +65,7 @@ begin
     v_wallet.balance_credits,
     'credit',
     v_wallet.balance_credits,
-    'Starter MegaBucks for joining MEGATHON',
+    format('Starter MegaBucks for joining %s', v_event.name),
     jsonb_build_object('eventId', v_event.id),
     v_now
   );

@@ -1,27 +1,23 @@
-import { normalizeRole } from "./utils";
-import type { Role } from "./types";
-
 const GENERATED_AVATAR_MARKER = "data-vota-avatar";
 
-const rolePalettes: Record<Role, [string, string, string]> = {
-  builder: ["#FF5A1F", "#FAFAF8", "#0B0B0C"],
-  sponsor: ["#0B0B0C", "#FAFAF8", "#0B0B0C"],
-  investor: ["#18C97B", "#FAFAF8", "#0B0B0C"],
-  other: ["#F0C000", "#FAFAF8", "#0B0B0C"]
-};
+const palettes: Array<[string, string, string]> = [
+  ["#FF5A1F", "#FAFAF8", "#0B0B0C"],
+  ["#0B0B0C", "#FAFAF8", "#0B0B0C"],
+  ["#18C97B", "#FAFAF8", "#0B0B0C"],
+  ["#F0C000", "#FAFAF8", "#0B0B0C"]
+];
 
 export function isGeneratedAvatarUrl(value: string | undefined) {
   return Boolean(value?.startsWith("data:image/svg+xml;utf8,") && value.includes(GENERATED_AVATAR_MARKER));
 }
 
-export function generatedAvatarDataUrl(nickname: string, roleInput: string) {
+export function generatedAvatarDataUrl(nickname: string, _roleInput: string) {
   const normalized = avatarNickname(nickname);
-  const role = normalizeRole(roleInput);
-  const hash = hashText(`${normalized}:${role}`);
-  const [primary, secondary, ink] = rolePalettes[role];
+  const hash = hashText(normalized);
+  const [primary, secondary, ink] = palettes[hash % palettes.length];
   const initials = initialsFor(normalized);
   const accent = hash % 2 === 0 ? secondary : primary;
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" ${GENERATED_AVATAR_MARKER}="1" viewBox="0 0 512 512"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="${primary}"/><stop offset="1" stop-color="${secondary}"/></linearGradient></defs><rect width="512" height="512" rx="72" fill="url(#g)"/><circle cx="${128 + (hash % 48)}" cy="${120 + (hash % 42)}" r="${80 + (hash % 34)}" fill="${accent}" opacity=".26"/><circle cx="${352 - (hash % 54)}" cy="${376 - (hash % 46)}" r="${94 + (hash % 28)}" fill="#fff" opacity=".22"/><text x="256" y="286" text-anchor="middle" font-family="Archivo, Arial, Helvetica, sans-serif" font-size="156" font-weight="900" fill="${ink}">${escapeXml(initials)}</text><text x="256" y="362" text-anchor="middle" font-family="Arial, Helvetica, sans-serif" font-size="34" font-weight="900" fill="${ink}" opacity=".72">${role.toUpperCase()}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" ${GENERATED_AVATAR_MARKER}="1" viewBox="0 0 512 512"><defs><linearGradient id="g" x1="0" x2="1" y1="0" y2="1"><stop stop-color="${primary}"/><stop offset="1" stop-color="${secondary}"/></linearGradient></defs><rect width="512" height="512" rx="72" fill="url(#g)"/><circle cx="${128 + (hash % 48)}" cy="${120 + (hash % 42)}" r="${80 + (hash % 34)}" fill="${accent}" opacity=".26"/><circle cx="${352 - (hash % 54)}" cy="${376 - (hash % 46)}" r="${94 + (hash % 28)}" fill="#fff" opacity=".22"/><text x="256" y="308" text-anchor="middle" font-family="Archivo, Arial, Helvetica, sans-serif" font-size="176" font-weight="900" fill="${ink}">${escapeXml(initials)}</text></svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 

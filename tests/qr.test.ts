@@ -33,6 +33,8 @@ test("stage page uses the compact join alias for deployed QR links", () => {
   const joinAlias = fs.readFileSync("app/j/[eventSlug]/page.tsx", "utf8");
   const envExample = fs.readFileSync(".env.example", "utf8");
   assert.match(stagePage, /stageJoinUrl\(slug\)/);
+  assert.match(stagePage, /Stage room not found/);
+  assert.doesNotMatch(stagePage, /loadStageData\(DEFAULT_EVENT_SLUG\)|recoverySlug|activeSlug/);
   assert.match(joinAlias, /redirect\(`\/join\/\$\{eventSlug\}`\)/);
   assert.match(envExample, /^NEXT_PUBLIC_QR_BASE_URL=https:\/\/vota\.wtf$/m);
   assert.doesNotThrow(() => createQrMatrix("https://vota-wtf.vercel.app/j/megathon-2026"));

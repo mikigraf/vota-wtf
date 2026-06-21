@@ -1,8 +1,7 @@
 const DEFAULT_REALTIME_TABLES = [
   "events",
   "markets",
-  "outcomes",
-  "market_aggregates"
+  "outcomes"
 ];
 
 export function realtimeTableNames() {

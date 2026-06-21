@@ -1,13 +1,14 @@
 import { NextRequest } from "next/server";
 import { moderateParticipantData, readDataStore } from "@/lib/data";
+import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { adminActionError, clientIpFromRequest, csvResponse, json, requireAdminRequest } from "@/lib/http";
 import { listParticipants } from "@/lib/participants";
+import { publicParticipant } from "@/lib/store";
 
 const participantCsvColumns = [
   "id",
   "eventId",
   "nickname",
-  "role",
   "participantType",
   "walletBalanceCredits",
   "totalIssuedCredits",
@@ -26,8 +27,7 @@ export async function GET(request: NextRequest) {
   const store = await readDataStore();
   const participants = listParticipants(store, {
     eventSlug: request.nextUrl.searchParams.get("eventSlug") || undefined,
-    q: request.nextUrl.searchParams.get("q") || undefined,
-    role: request.nextUrl.searchParams.get("role") || undefined
+    q: request.nextUrl.searchParams.get("q") || undefined
   });
   const participantIds = new Set(participants.map((participant) => participant.id));
   const wallets = store.wallets.filter((wallet) => participantIds.has(wallet.participantId));
@@ -40,7 +40,6 @@ export async function GET(request: NextRequest) {
           id: participant.id,
           eventId: participant.eventId,
           nickname: participant.nickname,
-          role: participant.role,
           participantType: participant.participantType,
           walletBalanceCredits: wallet?.balanceCredits || 0,
           totalIssuedCredits: wallet?.totalIssuedCredits || 0,
@@ -55,7 +54,7 @@ export async function GET(request: NextRequest) {
       participantCsvColumns
     );
   }
-  return json({ participants, wallets });
+  return json({ participants: participants.map(publicParticipant), wallets });
 }
 
 export async function POST(request: NextRequest) {
@@ -65,17 +64,17 @@ export async function POST(request: NextRequest) {
   const participantId = String(form.get("participantId") || "");
   const action = String(form.get("action") || "");
   const redirectParams = new URLSearchParams();
-  const eventSlug = String(form.get("eventSlug") || "");
+  const eventSlug = String(form.get("eventSlug") || "").trim();
   const query = String(form.get("q") || "");
-  const role = String(form.get("role") || "");
   const auditIp = clientIpFromRequest(request);
   if (eventSlug) redirectParams.set("eventSlug", eventSlug);
   if (query) redirectParams.set("q", query);
-  if (role && role !== "all") redirectParams.set("role", role);
   try {
+    if (!eventSlug) throw new Error("Event context is required.");
     if (!moderationActions.has(action)) throw new Error("Unknown participant action.");
     await moderateParticipantData({
       participantId,
+      eventSlug,
       action: action as "rename" | "hide_avatar" | "show_avatar" | "ban" | "unban",
       nickname: String(form.get("nickname") || ""),
       auditIp
@@ -84,6 +83,7 @@ export async function POST(request: NextRequest) {
     redirectTo.search = redirectParams.toString();
     return Response.redirect(redirectTo, 303);
   } catch (error) {
+    if (!redirectParams.has("eventSlug")) redirectParams.set("eventSlug", DEFAULT_EVENT_SLUG);
     const returnTo = `/admin/participants${redirectParams.toString() ? `?${redirectParams.toString()}` : ""}`;
     return adminActionError(request, returnTo, error instanceof Error ? error.message : "Could not update participant.");
   }

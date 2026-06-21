@@ -1,20 +1,6 @@
-import { DEFAULT_EVENT_SLUG, ROLE_LABELS } from "./constants";
-import { dashboardMetrics, getAggregate, leaderboardGroups, roleWinnerLabel } from "./store";
-import type { Market, Outcome, Role, Store } from "./types";
-
-const roles: Role[] = ["builder", "sponsor", "investor", "other"];
-
-export interface RolePerformanceRow {
-  role: Role;
-  label: string;
-  humans: number;
-  predictions: number;
-  committedCredits: number;
-  oracleScore: number;
-  averageOracleScore: number;
-  conversionRate: number;
-  leadingOutcome: string;
-}
+import { DEFAULT_EVENT_SLUG } from "./constants";
+import { dashboardMetrics, getAggregate } from "./store";
+import type { Market, Outcome, Store } from "./types";
 
 export interface MarketReportRow {
   id: string;
@@ -36,7 +22,6 @@ export interface CalaContextPack {
   title: string;
   contextSummary: string;
   roomThesis: string;
-  roleSplit: string;
   agentContrast: string;
   operatorPrompt: string;
   sourceFacts: string[];
@@ -67,7 +52,6 @@ export interface AdvancedAnalyticsReport {
     scanToPredictionRate: number;
     checkoutRate: number;
   };
-  rolePerformance: RolePerformanceRow[];
   markets: MarketReportRow[];
   calaContextPacks: CalaContextPack[];
   pixVersePromoBriefs: PixVersePromoBrief[];
@@ -107,49 +91,9 @@ function eventScope(store: Store, eventSlug: string) {
   return { event, markets, marketIds, participants, participantIds, humans, humanIds, actions };
 }
 
-function leadingOutcomeForRole(store: Store, markets: Market[], role: Role) {
-  const totals = new Map<string, number>();
-  for (const market of markets.filter((item) => item.status !== "draft")) {
-    const aggregate = getAggregate(store, market.id);
-    for (const [outcomeId, count] of Object.entries(aggregate.roleBreakdown[role] || {})) {
-      totals.set(outcomeId, (totals.get(outcomeId) || 0) + count);
-    }
-  }
-  const [outcomeId] = [...totals.entries()].filter(([, count]) => count > 0).sort((a, b) => b[1] - a[1])[0] || [];
-  return outcomeId ? store.outcomes.find((outcome) => outcome.id === outcomeId)?.label || "Unknown outcome" : "pure chaos";
-}
-
 function humanAgentDivergence(human: Record<string, number>, agent: Record<string, number>) {
   const outcomeIds = new Set([...Object.keys(human), ...Object.keys(agent)]);
   return [...outcomeIds].reduce((sum, outcomeId) => sum + Math.abs((human[outcomeId] || 0) - (agent[outcomeId] || 0)), 0);
-}
-
-function rolePerformance(store: Store, eventSlug: string): RolePerformanceRow[] {
-  const { event, markets, actions } = eventScope(store, eventSlug);
-  const groups = leaderboardGroups(store, eventSlug);
-  const marketIds = new Set(markets.map((market) => market.id));
-  return roles.map((role) => {
-    const humans = store.participants.filter(
-      (participant) => participant.eventId === event.id && participant.participantType === "human" && participant.role === role
-    );
-    const ids = new Set(humans.map((participant) => participant.id));
-    const roleActions = actions.filter((action) => ids.has(action.participantId));
-    const rolePositions = store.positions.filter((position) => ids.has(position.participantId) && marketIds.has(position.marketId));
-    const committedCredits = rolePositions.reduce((sum, position) => sum + position.rawCredits, 0);
-    const oracleScore = groups.byRole[role].reduce((sum, row) => sum + row.oracleScore, 0);
-    const predicted = new Set(roleActions.map((action) => action.participantId));
-    return {
-      role,
-      label: ROLE_LABELS[role],
-      humans: humans.length,
-      predictions: roleActions.length,
-      committedCredits,
-      oracleScore,
-      averageOracleScore: humans.length > 0 ? Math.round(oracleScore / humans.length) : 0,
-      conversionRate: ratio(predicted.size, humans.length),
-      leadingOutcome: leadingOutcomeForRole(store, markets, role)
-    };
-  });
 }
 
 function marketReportRows(store: Store, eventSlug: string): MarketReportRow[] {
@@ -193,7 +137,6 @@ function calaContextPacks(store: Store, eventSlug: string): CalaContextPack[] {
       market.people > 0
         ? `The room currently leans toward ${market.topPeopleOutcome}; MegaBuck-weighted conviction leans toward ${market.topCreditOutcome}.`
         : "No public room thesis yet; use this as a clean setup card before scanning starts.",
-    roleSplit: roles.map((role) => `${ROLE_LABELS[role]}: ${roleWinnerLabel(store, market.id, role)}`).join(" | "),
     agentContrast:
       market.humanAgentDelta > 0
         ? `Human and agent participation differ by ${market.humanAgentDelta} active positions. Keep the human layer primary.`
@@ -210,13 +153,13 @@ function calaContextPacks(store: Store, eventSlug: string): CalaContextPack[] {
   }));
 }
 
-function pixVersePromoBriefs(store: Store, eventSlug: string): PixVersePromoBrief[] {
+function pixVersePromoBriefs(store: Store, eventSlug: string, eventName: string): PixVersePromoBrief[] {
   const rows = marketReportRows(store, eventSlug).filter((market) => market.status !== "draft");
   return rows.map((market) => ({
     marketId: market.id,
     title: market.title,
     prompt:
-      `Create a fast 9:16 event promo for vota.wtf at MEGATHON. Show a QR scan, prediction cards, live signal bars, ` +
+      `Create a fast 9:16 event promo for vota.wtf at ${eventName}. Show a QR scan, prediction cards, live signal bars, ` +
       `${market.topPeopleOutcome} as the room signal, and a final reputation receipt. Use energetic stage lighting and crisp UI overlays.`,
     shots: [
       "Phone scans the stage QR and opens vota.wtf.",
@@ -264,10 +207,9 @@ export function buildAdvancedAnalyticsReport(store: Store, eventSlug = DEFAULT_E
       scanToPredictionRate: ratio(predictedHumanIds.size, scope.humans.length),
       checkoutRate: ratio(checkoutHumanIds.size, scope.humans.length)
     },
-    rolePerformance: rolePerformance(store, eventSlug),
     markets,
     calaContextPacks: calaContextPacks(store, eventSlug),
-    pixVersePromoBriefs: pixVersePromoBriefs(store, eventSlug)
+    pixVersePromoBriefs: pixVersePromoBriefs(store, eventSlug, scope.event.name)
   };
 }
 
@@ -276,17 +218,10 @@ export function analyticsReportRows(report: AdvancedAnalyticsReport) {
     ["overview", "Participants", "count", report.overview.totalParticipants, ""],
     ["overview", "Prediction actions", "count", report.overview.predictionsSubmitted, ""],
     ["overview", "Committed MegaBucks", "mbucks", report.overview.creditsCommitted, ""],
-    ["overview", "Virtual provision", "mbucks", report.overview.virtualProvisionCredits, ""],
+    ["overview", "Platform provision", "mbucks", report.overview.virtualProvisionCredits, ""],
     ["overview", "Scan to prediction", "rate", report.funnel.scanToPredictionRate, ""],
     ["overview", "Checkout conversion", "rate", report.funnel.checkoutRate, ""]
   ];
-  const roleRows = report.rolePerformance.map((role) => [
-    "role",
-    role.label,
-    "oracleScore",
-    role.oracleScore,
-    `${role.humans} humans, ${role.predictions} predictions, ${role.leadingOutcome}`
-  ]);
   const marketRows = report.markets.map((market) => [
     "market",
     market.title,
@@ -294,7 +229,7 @@ export function analyticsReportRows(report: AdvancedAnalyticsReport) {
     market.signalCredits,
     `${market.people} people, people leader ${market.topPeopleOutcome}, credit leader ${market.topCreditOutcome}`
   ]);
-  return [...overviewRows, ...roleRows, ...marketRows].map(([section, name, metric, value, detail]) => ({
+  return [...overviewRows, ...marketRows].map(([section, name, metric, value, detail]) => ({
     section,
     name,
     metric,

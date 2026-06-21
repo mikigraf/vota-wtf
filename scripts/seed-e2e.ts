@@ -9,46 +9,52 @@ const SEEDED_AT = "2026-06-21T10:00:00.000Z";
 
 const E2E_EVENTS: E2EEvent[] = [
   {
-    id: "00000000-0000-4000-8000-000000000101",
+    id: "00000000-0000-4000-8000-000000000901",
     slug: "megathon",
     name: "Megathon"
   },
   {
-    id: "00000000-0000-4000-8000-000000000102",
-    slug: "megatalkTesting",
-    name: "megatalkTesting"
+    id: "00000000-0000-4000-8000-000000000902",
+    slug: "testingmiki",
+    name: "testingmiki"
   }
 ];
 
-const MARKET_IDS: Record<string, [string, string]> = {
+const MARKET_IDS: Record<string, string[]> = {
   megathon: [
-    "00000000-0000-4000-8000-000000000201",
-    "00000000-0000-4000-8000-000000000202"
+    "00000000-0000-4000-8000-000000001001",
+    "00000000-0000-4000-8000-000000001002",
+    "00000000-0000-4000-8000-000000001003"
   ],
-  megatalkTesting: [
-    "00000000-0000-4000-8000-000000000301",
-    "00000000-0000-4000-8000-000000000302"
+  testingmiki: [
+    "00000000-0000-4000-8000-000000001101",
+    "00000000-0000-4000-8000-000000001102"
   ]
 };
 
 const OUTCOME_IDS: Record<string, string[]> = {
-  "00000000-0000-4000-8000-000000000201": [
-    "00000000-0000-4000-8000-000000000211",
-    "00000000-0000-4000-8000-000000000212",
-    "00000000-0000-4000-8000-000000000213"
+  "00000000-0000-4000-8000-000000001001": [
+    "00000000-0000-4000-8000-000000001011",
+    "00000000-0000-4000-8000-000000001012",
+    "00000000-0000-4000-8000-000000001013"
   ],
-  "00000000-0000-4000-8000-000000000202": [
-    "00000000-0000-4000-8000-000000000221",
-    "00000000-0000-4000-8000-000000000222"
+  "00000000-0000-4000-8000-000000001002": [
+    "00000000-0000-4000-8000-000000001021",
+    "00000000-0000-4000-8000-000000001022"
   ],
-  "00000000-0000-4000-8000-000000000301": [
-    "00000000-0000-4000-8000-000000000311",
-    "00000000-0000-4000-8000-000000000312",
-    "00000000-0000-4000-8000-000000000313"
+  "00000000-0000-4000-8000-000000001003": [
+    "00000000-0000-4000-8000-000000001031",
+    "00000000-0000-4000-8000-000000001032",
+    "00000000-0000-4000-8000-000000001033"
   ],
-  "00000000-0000-4000-8000-000000000302": [
-    "00000000-0000-4000-8000-000000000321",
-    "00000000-0000-4000-8000-000000000322"
+  "00000000-0000-4000-8000-000000001101": [
+    "00000000-0000-4000-8000-000000001111",
+    "00000000-0000-4000-8000-000000001112",
+    "00000000-0000-4000-8000-000000001113"
+  ],
+  "00000000-0000-4000-8000-000000001102": [
+    "00000000-0000-4000-8000-000000001121",
+    "00000000-0000-4000-8000-000000001122"
   ]
 };
 
@@ -264,13 +270,23 @@ async function createOpenMarket(
 
 async function seedEvent(input: E2EEvent) {
   await resetEvent(input);
-  const [winnerMarketId, demoMarketId] = MARKET_IDS[input.slug];
-  const winner = await createOpenMarket(input.slug, winnerMarketId, `Who wins ${input.name}?`, "Finals", [
+  const marketIds = MARKET_IDS[input.slug];
+  const winner = await createOpenMarket(input.slug, marketIds[0], `Who wins ${input.name}?`, "Finals", [
     "Team Orbit",
     "Team Nova",
     "Team Atlas"
   ]);
-  await createOpenMarket(input.slug, demoMarketId, `Will ${input.name} demo fail?`, "Demo", ["Yes", "No"]);
+  await createOpenMarket(input.slug, marketIds[1], input.slug === "testingmiki" ? `Will ${input.name} resolve cleanly?` : `Will ${input.name} demo fail?`, "Demo", [
+    "Yes",
+    "No"
+  ]);
+  if (marketIds[2]) {
+    await createOpenMarket(input.slug, marketIds[2], "Which moment gets the loudest reaction?", "Audience pulse", [
+      "Winner reveal",
+      "Demo surprise",
+      "Founder cameo"
+    ]);
+  }
   await updateStageControlsData(
     {
       eventSlug: input.slug,

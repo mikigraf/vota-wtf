@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   calculateAllowedStake,
@@ -20,7 +23,6 @@ import {
   publicState,
   readStore,
   recordCheckoutIntent,
-  roleWinnerLabel,
   updateMarket,
   updateParticipantProfile,
   upsertHouseAgents,
@@ -33,14 +35,17 @@ import { joinGuardHash } from "../src/lib/auth";
 import { analyticsReportRows, buildAdvancedAnalyticsReport } from "../src/lib/analytics";
 import {
   featureMarketData,
+  findMarketEventSlugData,
   initParticipantSessionData,
   placePredictionData,
   readPublicEventStoreData,
   readPublicMarketStoreData,
+  readReceiptStoreData,
+  scopedParticipantNextPathData,
   updateStageControlsData
 } from "../src/lib/data";
 import { hasCompletedProfile, listParticipants } from "../src/lib/participants";
-import { buildReceiptPromo } from "../src/lib/promo";
+import { buildReceiptPromo, eventSlugForReceipt } from "../src/lib/promo";
 import { LIVESTREAM_DEMO_EVENT_SLUG, PLATFORM_PRIOR_CREDITS_PER_OUTCOME } from "../src/lib/constants";
 
 function join(store = createSeedStore()) {
@@ -67,7 +72,7 @@ function joinEvent(store: ReturnType<typeof createSeedStore>, eventSlug: string)
   return joined;
 }
 
-test("first fair-launch prediction must be exactly 100 MBucks and records 2% virtual provision", () => {
+test("first fair-launch prediction must be exactly 100 MBucks and records 2% platform provision", () => {
   const store = createSeedStore();
   const user = join(store);
   assert.throws(
@@ -92,6 +97,38 @@ test("first fair-launch prediction must be exactly 100 MBucks and records 2% vir
   assert.equal(result.wallet.balanceCredits, 900);
   assert.equal(result.aggregate.totalPeople, 1);
   assert.equal(result.aggregate.totalSignalCredits, 98);
+});
+
+test("platform provision account is hidden from participant and leaderboard surfaces", () => {
+  const store = createSeedStore();
+  const platform = store.participants.find((participant) => participant.participantType === "platform");
+  assert.ok(platform);
+  join(store);
+  assert.equal(listParticipants(store, { eventSlug: "megathon-2026" }).some((participant) => participant.id === platform.id), false);
+  const groups = leaderboardGroups(store, "megathon-2026");
+  assert.equal(groups.overall.some((participant) => participant.id === platform.id), false);
+  assert.equal(groups.agents.some((participant) => participant.id === platform.id), false);
+  const platformMarket = store.markets.find((market) => market.eventId === platform.eventId && market.status === "open");
+  const platformOutcome = store.outcomes.find((outcome) => outcome.marketId === platformMarket?.id);
+  if (!platformMarket || !platformOutcome) throw new Error("Expected an open market for the platform account event.");
+  assert.match(
+    calculateAllowedStake(store, {
+      participantId: platform.id,
+      marketId: platformMarket.id,
+      outcomeId: platformOutcome.id
+    }).reason,
+    /platform provision account cannot predict/
+  );
+  assert.throws(
+    () =>
+      placePrediction(store, {
+        participantId: platform.id,
+        marketId: platformMarket.id,
+        outcomeId: platformOutcome.id,
+        amountCredits: 100
+      }),
+    /platform provision account cannot predict/
+  );
 });
 
 test("fair-launch participants can step up before the room fills", () => {
@@ -147,6 +184,14 @@ test("human sessions must complete profile before predicting", () => {
   );
 });
 
+test("starter credit ledger reason follows the selected event", () => {
+  const store = createSeedStore();
+  const joined = createParticipantSession(store, "testingmiki");
+  const entry = store.ledgerEntries.find((item) => item.participantId === joined.participant.id && item.type === "starter_credit");
+  assert.equal(entry?.reason, "Starter MegaBucks for joining testingmiki");
+  assert.doesNotMatch(entry?.reason || "", /MEGATHON/);
+});
+
 test("profile completion requires a unique stage name and email but not a visible role or uploaded photo", () => {
   assert.equal(hasCompletedProfile({ nickname: "oracle", email: "oracle@example.test", role: "other" }), false);
   assert.equal(hasCompletedProfile({ nickname: "  ", email: "blank@example.test", role: "builder" }), false);
@@ -164,6 +209,28 @@ test("profile completion requires a unique stage name and email but not a visibl
       }),
     /stage name is already taken/
   );
+  assert.throws(
+    () =>
+      updateParticipantProfile(store, second.participant.id, {
+        nickname: "unique_name_same_email",
+        email: first.participant.email
+    }),
+    /email is already in the arena/
+  );
+  assert.throws(
+    () =>
+      updateParticipantProfile(store, second.participant.id, {
+        nickname: "🔥🔥🔥",
+        email: "unsupported@example.test"
+      }),
+    /letters, numbers, spaces, dots, dashes, or underscores/
+  );
+  const sameEmailDifferentEvent = createParticipantSession(store, "testingmiki");
+  updateParticipantProfile(store, sameEmailDifferentEvent.participant.id, {
+    nickname: "testing_email_owner",
+    email: first.participant.email
+  });
+  assert.equal(store.participants.find((item) => item.id === sameEmailDifferentEvent.participant.id)?.email, first.participant.email);
 });
 
 test("human profile is locked after entering the arena", () => {
@@ -179,6 +246,45 @@ test("human profile is locked after entering the arena", () => {
     /locked after entering/
   );
   assert.equal(store.participants.find((item) => item.id === user.participant.id)?.nickname, user.participant.nickname);
+});
+
+test("readStore backfills default event rooms into older local JSON stores", () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-room-backfill-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const legacy = createSeedStore();
+    const existing = createParticipantSession(legacy, "megathon-2026");
+    const roomEventIds = new Set(
+      legacy.events.filter((event) => event.slug === "megathon" || event.slug === "testingmiki").map((event) => event.id)
+    );
+    const roomMarketIds = new Set(legacy.markets.filter((market) => roomEventIds.has(market.eventId)).map((market) => market.id));
+    legacy.events = legacy.events.filter((event) => !roomEventIds.has(event.id));
+    legacy.markets = legacy.markets.filter((market) => !roomMarketIds.has(market.id));
+    legacy.outcomes = legacy.outcomes.filter((outcome) => !roomMarketIds.has(outcome.marketId));
+    legacy.marketAggregates = legacy.marketAggregates.filter((aggregate) => !roomMarketIds.has(aggregate.marketId));
+    writeStore(legacy);
+
+    const upgraded = readStore();
+    const megathon = upgraded.events.find((event) => event.slug === "megathon");
+    const testingmiki = upgraded.events.find((event) => event.slug === "testingmiki");
+
+    assert.ok(megathon);
+    assert.ok(testingmiki);
+    assert.equal(upgraded.participants.some((participant) => participant.id === existing.participant.id), true);
+    assert.equal(upgraded.markets.filter((market) => market.eventId === megathon.id).length, 3);
+    assert.equal(upgraded.markets.filter((market) => market.eventId === testingmiki.id).length, 3);
+    assert.equal(publicState(upgraded, "megathon").markets.length, 3);
+    assert.equal(publicState(upgraded, "testingmiki").markets.length, 3);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("livestream demo seed preloads 37 callers across all outcomes", () => {
@@ -302,12 +408,7 @@ test("blind launch redacts public distribution until unlock", () => {
   assert.equal(hiddenMarket?.blindLaunch.remainingPredictions, 19);
   assert.equal(hiddenOutcome?.stageSignal, 0);
   assert.equal(hiddenMarket?.oddsHistory.length, 0);
-  assert.deepEqual(hiddenState.roleWinners, {
-    builder: "pure chaos",
-    sponsor: "pure chaos",
-    investor: "pure chaos",
-    other: "pure chaos"
-  });
+  assert.equal("roleWinners" in hiddenState, false);
 
   const market = store.markets.find((item) => item.id === SEED_IDS.markets.winner);
   if (!market) throw new Error("Expected market");
@@ -322,6 +423,36 @@ test("blind launch redacts public distribution until unlock", () => {
 
 test("slippage preview shows before after movement and capacity block", () => {
   const store = createSeedStore();
+  const fairLaunchMarket = createMarket(store, {
+    eventSlug: "megathon-2026",
+    title: "Fresh fair launch",
+    description: "A deterministic fair-launch preview market.",
+    category: "Rules",
+    resolutionRule: "Organizer resolves.",
+    showOnStage: true,
+    fairLaunchPeopleThreshold: 500,
+    outcomes: [{ label: "Yes" }, { label: "No" }]
+  });
+  transitionMarket(store, fairLaunchMarket.id, "open");
+  const fairLaunchOutcome = store.outcomes.find((outcome) => outcome.marketId === fairLaunchMarket.id);
+  if (!fairLaunchOutcome) throw new Error("Expected fair launch outcome");
+  const fairLaunchUser = joinEvent(store, "megathon-2026");
+  const fairLaunchBlocked = predictionPreview(store, {
+    participantId: fairLaunchUser.participant.id,
+    marketId: fairLaunchMarket.id,
+    outcomeId: fairLaunchOutcome.id,
+    amountCredits: 50
+  });
+  assert.equal(fairLaunchBlocked?.blocked, true);
+  assert.match(fairLaunchBlocked?.reason || "", /exactly 100 MBucks/);
+  const fairLaunchValid = predictionPreview(store, {
+    participantId: fairLaunchUser.participant.id,
+    marketId: fairLaunchMarket.id,
+    outcomeId: fairLaunchOutcome.id,
+    amountCredits: 100
+  });
+  assert.equal(fairLaunchValid?.blocked, false);
+
   const user = joinEvent(store, LIVESTREAM_DEMO_EVENT_SLUG);
   const valid = predictionPreview(store, {
     participantId: user.participant.id,
@@ -627,6 +758,44 @@ test("market fair-launch thresholds are configurable", () => {
   }).fairLaunch, false);
 });
 
+test("first prediction preview requires the minimum initial stake before allowing low-wallet entries", () => {
+  const store = createSeedStore();
+  const market = createMarket(store, {
+    eventSlug: "megathon-2026",
+    title: "Low wallet market",
+    description: "Verifies first prediction minimum stake is reflected in preview.",
+    category: "Ops",
+    resolutionRule: "Organizer resolves.",
+    fairLaunchOverride: true,
+    outcomes: [{ label: "Yes" }, { label: "No" }]
+  });
+  const [yes] = store.outcomes.filter((item) => item.marketId === market.id);
+  const user = join(store);
+  const wallet = store.wallets.find((item) => item.participantId === user.participant.id);
+  if (!yes || !wallet) throw new Error("Expected outcome and wallet.");
+  transitionMarket(store, market.id, "open");
+  wallet.balanceCredits = 50;
+
+  const allowed = calculateAllowedStake(store, {
+    participantId: user.participant.id,
+    marketId: market.id,
+    outcomeId: yes.id
+  });
+  assert.equal(allowed.allowedAdd, 0);
+  assert.equal(allowed.minInitial, 100);
+  assert.match(allowed.reason, /First prediction needs 100 MBucks/);
+  assert.throws(
+    () =>
+      placePrediction(store, {
+        participantId: user.participant.id,
+        marketId: market.id,
+        outcomeId: yes.id,
+        amountCredits: 50
+      }),
+    /First prediction must be at least 100 MBucks/
+  );
+});
+
 test("markets require complete copy and at least two outcomes", () => {
   const store = createSeedStore();
   assert.throws(
@@ -664,7 +833,7 @@ test("markets require complete copy and at least two outcomes", () => {
   assert.throws(
     () =>
       updateMarket(store, draft.id, {
-        outcomes: [{ label: "Builders" }]
+        outcomes: [{ label: "Only one" }]
       }),
     /two outcomes/
   );
@@ -723,6 +892,9 @@ test("checkout button intent is counted once per participant with repeat click t
   assert.equal(metrics.intentCount, 1);
   assert.equal(metrics.intentClicks, 2);
   assert.equal(metrics.intentProjectedEur, 1);
+  assert.equal(metrics.intentClickProjectedEur, 2);
+  assert.equal(metrics.intentCredits, 100);
+  assert.equal(metrics.intentClickCredits, 200);
 });
 
 test("failed or canceled test purchase status changes are audited once per transition", () => {
@@ -805,8 +977,19 @@ test("public store readers exclude voided markets before participant projection"
       showOnStage: true,
       outcomes: [{ label: "Yes" }, { label: "No" }]
     });
+    const testingVoided = createMarket(store, {
+      eventSlug: "testingmiki",
+      title: "Voided testingmiki reader candidate",
+      description: "Voided side-room markets should recover to their owning room.",
+      category: "Ops",
+      resolutionRule: "Organizer voids.",
+      showOnStage: true,
+      outcomes: [{ label: "Yes" }, { label: "No" }]
+    });
     transitionMarket(store, voided.id, "open");
     transitionMarket(store, voided.id, "void");
+    transitionMarket(store, testingVoided.id, "open");
+    transitionMarket(store, testingVoided.id, "void");
     writeStore(store);
 
     const eventStore = await readPublicEventStoreData("megathon-2026");
@@ -817,6 +1000,46 @@ test("public store readers exclude voided markets before participant projection"
     const marketStore = await readPublicMarketStoreData(voided.id);
     assert.equal(marketStore.markets.length, 0);
     assert.equal(marketStore.outcomes.length, 0);
+    assert.equal(await findMarketEventSlugData(voided.id), "megathon-2026");
+    assert.equal(await findMarketEventSlugData(testingVoided.id), "testingmiki");
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    writeStore(previousStore);
+  }
+});
+
+test("join next paths are scoped to the selected event before entering the arena", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStore = readStore();
+  process.env.VOTA_DATA_BACKEND = "local";
+  try {
+    const store = createSeedStore();
+    const megathonEvent = store.events.find((event) => event.slug === "megathon");
+    const testingEvent = store.events.find((event) => event.slug === "testingmiki");
+    if (!megathonEvent || !testingEvent) throw new Error("Expected seeded rooms.");
+    const megathonMarket = store.markets.find((market) => market.eventId === megathonEvent.id && market.status === "open");
+    const testingMarket = store.markets.find((market) => market.eventId === testingEvent.id && market.status === "open");
+    if (!megathonMarket || !testingMarket) throw new Error("Expected seeded open markets.");
+    const voidedTestingMarket = createMarket(store, {
+      eventSlug: "testingmiki",
+      title: "Voided join next candidate",
+      description: "A stale link that should not become the post-join destination.",
+      category: "Ops",
+      resolutionRule: "Organizer voids.",
+      showOnStage: true,
+      outcomes: [{ label: "Yes" }, { label: "No" }]
+    });
+    transitionMarket(store, voidedTestingMarket.id, "open");
+    transitionMarket(store, voidedTestingMarket.id, "void");
+    writeStore(store);
+
+    assert.equal(await scopedParticipantNextPathData(`/m/${testingMarket.id}?from=qr`, "testingmiki"), `/m/${testingMarket.id}?from=qr`);
+    assert.equal(await scopedParticipantNextPathData("/e/testingmiki?checkout=abc", "testingmiki"), "/e/testingmiki?checkout=abc");
+    assert.equal(await scopedParticipantNextPathData(`/m/${megathonMarket.id}`, "testingmiki"), "");
+    assert.equal(await scopedParticipantNextPathData(`/m/${voidedTestingMarket.id}`, "testingmiki"), "");
+    assert.equal(await scopedParticipantNextPathData("/join/megathon", "testingmiki"), "");
+    assert.equal(await scopedParticipantNextPathData("/admin/stage", "testingmiki"), "");
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;
@@ -902,9 +1125,10 @@ test("resolved markets cannot be voided after winner settlement", () => {
     outcomeId: SEED_IDS.outcomes.orbit,
     note: "Official result."
   });
-  assert.equal(store.wallets.find((wallet) => wallet.participantId === correct.participant.id)?.balanceCredits, 1000);
+  assert.equal(store.wallets.find((wallet) => wallet.participantId === correct.participant.id)?.balanceCredits, 998);
   assert.throws(() => transitionMarket(store, SEED_IDS.markets.winner, "void"), /Resolved markets cannot be voided/);
-  assert.equal(store.wallets.find((wallet) => wallet.participantId === correct.participant.id)?.balanceCredits, 1000);
+  assert.equal(store.wallets.find((wallet) => wallet.participantId === correct.participant.id)?.balanceCredits, 998);
+  assert.equal(store.ledgerEntries.find((entry) => entry.type === "platform_provision" && entry.marketId === SEED_IDS.markets.winner)?.amountCredits, 2);
   assert.equal(store.ledgerEntries.filter((entry) => entry.type === "void_refund" && entry.marketId === SEED_IDS.markets.winner).length, 0);
 });
 
@@ -967,6 +1191,36 @@ test("audit filters tolerate duplicate query parameters", () => {
 
   assert.equal(logs.length, 1);
   assert.equal(logs[0]?.entityId, market.id);
+});
+
+test("audit filters are scoped by selected event ownership", () => {
+  const store = createSeedStore();
+  const megathonMarket = createMarket(store, {
+    eventSlug: "megathon-2026",
+    title: "Megathon scoped audit market",
+    description: "Should only appear for the Megathon audit view.",
+    category: "Operations",
+    resolutionRule: "Organizer resolves.",
+    outcomes: [{ label: "Yes" }, { label: "No" }]
+  });
+  const testingMarket = createMarket(store, {
+    eventSlug: "testingmiki",
+    title: "Testing scoped audit market",
+    description: "Should only appear for the testingmiki audit view.",
+    category: "Operations",
+    resolutionRule: "Organizer resolves.",
+    outcomes: [{ label: "Yes" }, { label: "No" }]
+  });
+
+  const megathonLogs = listAuditLogs(store, { eventSlug: "megathon-2026", action: "create_market", q: "scoped audit market" });
+  const testingLogs = listAuditLogs(store, { eventSlug: "testingmiki", action: "create_market", q: "scoped audit market" });
+  const missingLogs = listAuditLogs(store, { eventSlug: "missing-event" });
+
+  assert.equal(megathonLogs.some((log) => log.entityId === megathonMarket.id), true);
+  assert.equal(megathonLogs.some((log) => log.entityId === testingMarket.id), false);
+  assert.equal(testingLogs.some((log) => log.entityId === testingMarket.id), true);
+  assert.equal(testingLogs.some((log) => log.entityId === megathonMarket.id), false);
+  assert.equal(missingLogs.length, 0);
 });
 
 test("dashboard metrics are scoped to the selected event", () => {
@@ -1044,7 +1298,6 @@ test("participant listing is scoped to event and preserves admin filters", () =>
   const store = createSeedStore();
   const defaultUser = join(store);
   defaultUser.participant.nickname = "default_builder";
-  defaultUser.participant.role = "builder";
   store.events.push({
     id: "00000000-0000-4000-8000-000000009003",
     slug: "side-participants",
@@ -1057,10 +1310,9 @@ test("participant listing is scoped to event and preserves admin filters", () =>
   });
   const sideUser = joinEvent(store, "side-participants");
   sideUser.participant.nickname = "side_builder";
-  sideUser.participant.role = "builder";
 
-  const defaultParticipants = listParticipants(store, { eventSlug: "megathon-2026", q: "builder", role: "builder" });
-  const sideParticipants = listParticipants(store, { eventSlug: "side-participants", q: "builder", role: "builder" });
+  const defaultParticipants = listParticipants(store, { eventSlug: "megathon-2026", q: "builder" });
+  const sideParticipants = listParticipants(store, { eventSlug: "side-participants", q: "builder" });
 
   assert.deepEqual(defaultParticipants.map((participant) => participant.id), [defaultUser.participant.id]);
   assert.deepEqual(sideParticipants.map((participant) => participant.id), [sideUser.participant.id]);
@@ -1176,6 +1428,7 @@ test("prediction data uses the session participant instead of client participant
 
     assert.equal(result.position.participantId, real.participant.id);
     assert.notEqual(result.position.participantId, impostor.participant.id);
+    assert.ok(result.user);
     assert.equal(result.user.position?.participantId, real.participant.id);
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
@@ -1498,9 +1751,9 @@ test("live stage modes never feature a resolved market", async () => {
     writeStore(current);
     const event = await updateStageControlsData({
       eventSlug: "megathon-2026",
-      stageMode: "role_battle"
+      stageMode: "humans_vs_agents"
     });
-    assert.equal(event.stageMode, "role_battle");
+    assert.equal(event.stageMode, "humans_vs_agents");
     assert.equal(event.featuredMarketId, SEED_IDS.markets.winner);
 
     const fallbackOnlyStore = createSeedStore();
@@ -1568,21 +1821,70 @@ test("resolving a market scores correct positions and settles MegaBucks to winne
   const settlementEntries = store.ledgerEntries.filter(
     (entry) => entry.type === "resolution_credit" && entry.marketId === SEED_IDS.markets.winner
   );
+  const platformEntry = store.ledgerEntries.find(
+    (entry) => entry.type === "platform_provision" && entry.marketId === SEED_IDS.markets.winner
+  );
+  const platformWallet = store.wallets.find((wallet) => wallet.participantId === platformEntry?.participantId);
   assert.ok((correctParticipant?.oracleScore || 0) > 0);
   assert.equal(wrongParticipant?.oracleScore, 0);
-  assert.equal(correctWallet?.balanceCredits, 1100);
+  assert.equal(correctWallet?.balanceCredits, 1096);
   assert.equal(correctWallet?.totalCommittedCredits, 0);
   assert.equal(wrongWallet?.balanceCredits, 900);
   assert.equal(wrongWallet?.totalCommittedCredits, 0);
   assert.equal(settlementEntries.length, 1);
   assert.equal(settlementEntries[0]?.participantId, correct.participant.id);
-  assert.equal(settlementEntries[0]?.amountCredits, 200);
-  assert.equal(settlementEntries[0]?.metadata?.stakeReturned, 100);
-  assert.equal(settlementEntries[0]?.metadata?.poolShare, 100);
+  assert.equal(settlementEntries[0]?.amountCredits, 196);
+  assert.equal(settlementEntries[0]?.metadata?.stakeReturned, 98);
+  assert.equal(settlementEntries[0]?.metadata?.rawStake, 100);
+  assert.equal(settlementEntries[0]?.metadata?.stakeProvision, 2);
+  assert.equal(settlementEntries[0]?.metadata?.poolShare, 98);
+  assert.equal(platformEntry?.amountCredits, 4);
+  assert.equal(platformEntry?.metadata?.netLosingPool, 98);
+  assert.equal(platformWallet?.balanceCredits, 4);
   assert.equal(
     store.adminAuditLogs.find((entry) => entry.action === "resolve_market")?.details.settledCredits,
-    200
+    196
   );
+  assert.equal(
+    store.adminAuditLogs.find((entry) => entry.action === "resolve_market")?.details.platformProvisionCredits,
+    4
+  );
+});
+
+test("no-winner resolution records the unclaimed pool explicitly", () => {
+  const store = createSeedStore();
+  const wrong = join(store);
+  placePrediction(store, {
+    participantId: wrong.participant.id,
+    marketId: SEED_IDS.markets.winner,
+    outcomeId: SEED_IDS.outcomes.nova,
+    amountCredits: 100
+  });
+  transitionMarket(store, SEED_IDS.markets.winner, "lock");
+  resolveMarket(store, SEED_IDS.markets.winner, { outcomeId: SEED_IDS.outcomes.orbit, note: "Official stage announcement." });
+
+  const settlementEntries = store.ledgerEntries.filter(
+    (entry) => entry.type === "resolution_credit" && entry.marketId === SEED_IDS.markets.winner
+  );
+  const platformEntry = store.ledgerEntries.find(
+    (entry) => entry.type === "platform_provision" && entry.marketId === SEED_IDS.markets.winner
+  );
+  const wrongWallet = store.wallets.find((wallet) => wallet.participantId === wrong.participant.id);
+  const platformWallet = store.wallets.find((wallet) => wallet.participantId === platformEntry?.participantId);
+  const audit = store.adminAuditLogs.find((entry) => entry.action === "resolve_market" && entry.entityId === SEED_IDS.markets.winner);
+
+  assert.equal(settlementEntries.length, 0);
+  assert.equal(platformEntry?.amountCredits, 2);
+  assert.equal(platformWallet?.balanceCredits, 2);
+  assert.equal(wrongWallet?.balanceCredits, 900);
+  assert.equal(wrongWallet?.totalCommittedCredits, 0);
+  assert.equal(audit?.details.settledCount, 0);
+  assert.equal(audit?.details.settledCredits, 0);
+  assert.equal(audit?.details.winningPool, 0);
+  assert.equal(audit?.details.losingPool, 100);
+  assert.equal(audit?.details.netLosingPool, 98);
+  assert.equal(audit?.details.platformProvisionCredits, 2);
+  assert.equal(audit?.details.unclaimedPool, 98);
 });
 
 test("winner settlement distributes losing pool proportionally and is idempotent", () => {
@@ -1625,11 +1927,16 @@ test("winner settlement distributes losing pool proportionally and is idempotent
   const largeWallet = store.wallets.find((wallet) => wallet.participantId === largeWinner.participant.id);
   const loserWallet = store.wallets.find((wallet) => wallet.participantId === loser.participant.id);
   const entries = store.ledgerEntries.filter((entry) => entry.type === "resolution_credit" && entry.marketId === market.id);
-  assert.equal(smallWallet?.balanceCredits, 1100);
-  assert.equal(largeWallet?.balanceCredits, 1200);
+  const platformEntries = store.ledgerEntries.filter((entry) => entry.type === "platform_provision" && entry.marketId === market.id);
+  const platformWallet = store.wallets.find((wallet) => wallet.participantId === platformEntries[0]?.participantId);
+  assert.equal(smallWallet?.balanceCredits, 1096);
+  assert.equal(largeWallet?.balanceCredits, 1192);
   assert.equal(loserWallet?.balanceCredits, 700);
-  assert.deepEqual(entries.map((entry) => entry.amountCredits).sort((a, b) => a - b), [200, 400]);
+  assert.deepEqual(entries.map((entry) => entry.amountCredits).sort((a, b) => a - b), [196, 392]);
   assert.equal(entries.length, 2);
+  assert.equal(platformEntries.length, 1);
+  assert.equal(platformEntries[0]?.amountCredits, 12);
+  assert.equal(platformWallet?.balanceCredits, 12);
   assert.throws(() => resolveMarket(store, market.id, { outcomeId: no.id, note: "Wrong duplicate." }), /different outcome/);
 });
 
@@ -1687,6 +1994,8 @@ test("receipt links use the first scoreable correct action after a switch", () =
   assert.ok(receipt?.oracleScore && receipt.oracleScore > 0);
   assert.ok(secondReceipt?.oracleScore && secondReceipt.oracleScore > 0);
   assert.equal(receipt!.participant.oracleScore, receipt!.oracleScore + secondReceipt!.oracleScore);
+  assert.equal("role" in receipt!.participant, false);
+  assert.equal("role" in secondReceipt!.participant, false);
   assert.equal(losingActionReceipt?.market, undefined);
 
   target.participant.isBanned = true;
@@ -1697,7 +2006,72 @@ test("receipt links use the first scoreable correct action after a switch", () =
   }).receiptId, undefined);
 });
 
-test("advanced analytics report includes role, market, Cala, and PixVerse outputs", () => {
+test("receipt surfaces link back to the receipt event", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const store = createSeedStore();
+  const joined = joinEvent(store, "testingmiki");
+  const event = store.events.find((item) => item.slug === "testingmiki");
+  if (!event) throw new Error("Expected testingmiki event.");
+  const market = store.markets.find((item) => item.eventId === event.id && item.title === "Who wins testingmiki?");
+  if (!market) throw new Error("Expected testingmiki market.");
+  const outcome = store.outcomes.find((item) => item.marketId === market.id && item.label === "Team Orbit");
+  if (!outcome) throw new Error("Expected testingmiki outcome.");
+
+  const pendingReceipt = participantReceipt(store, joined.participant.id, joined.participant.id);
+  const pendingPromo = buildReceiptPromo(store, joined.participant.id);
+  const prediction = placePrediction(store, {
+    participantId: joined.participant.id,
+    marketId: market.id,
+    outcomeId: outcome.id,
+    amountCredits: 100
+  });
+  transitionMarket(store, market.id, "lock");
+  resolveMarket(store, market.id, { outcomeId: outcome.id, note: "Testing room official result." });
+  const readyReceipt = participantReceipt(store, prediction.action.id, prediction.action.id);
+  const readyPromo = buildReceiptPromo(store, prediction.action.id);
+
+  assert.equal(eventSlugForReceipt(store, pendingReceipt), "testingmiki");
+  assert.equal(pendingPromo.status, "pending");
+  assert.equal(pendingPromo.eventSlug, "testingmiki");
+  assert.match(pendingPromo.shareCopy, /testingmiki/);
+  assert.match(pendingPromo.pixVersePrompt, /testingmiki/);
+  assert.doesNotMatch(pendingPromo.shareCopy, /MEGATHON/);
+  assert.doesNotMatch(pendingPromo.pixVersePrompt, /MEGATHON/);
+  assert.equal(eventSlugForReceipt(store, readyReceipt), "testingmiki");
+  assert.equal(readyPromo.status, "ready");
+  assert.equal(readyPromo.eventSlug, "testingmiki");
+  assert.match(readyPromo.pixVersePrompt, /testingmiki/);
+  assert.doesNotMatch(readyPromo.pixVersePrompt, /MEGATHON/);
+
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = "/tmp/vota-receipt-event-scope.json";
+  try {
+    writeStore(store);
+    const pendingStore = await readReceiptStoreData(joined.participant.id);
+    const readyStore = await readReceiptStoreData(prediction.action.id);
+    assert.equal(pendingStore.events[0]?.slug, "testingmiki");
+    assert.equal(pendingStore.participants[0]?.id, joined.participant.id);
+    assert.equal(readyStore.events[0]?.slug, "testingmiki");
+    assert.deepEqual(readyStore.markets.map((item) => item.id), [market.id]);
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+  }
+});
+
+test("missing receipt promo falls back to the configured default room", () => {
+  const store = createSeedStore();
+  const promo = buildReceiptPromo(store, "missing-receipt");
+  assert.equal(promo.status, "pending");
+  assert.equal(promo.eventSlug, "megathon");
+  assert.doesNotMatch(promo.eventSlug, /megathon-2026/);
+  assert.match(promo.shareCopy, /megathon/);
+});
+
+test("advanced analytics report includes market, Cala, and PixVerse outputs", () => {
   const store = createSeedStore();
   const user = createParticipantSession(store, "megathon-2026");
   user.participant = updateParticipantProfile(store, user.participant.id, {
@@ -1731,10 +2105,12 @@ test("advanced analytics report includes role, market, Cala, and PixVerse output
   assert.equal(report.funnel.checkedOut, 1);
   assert.equal(winnerMarket?.topPeopleOutcome, "Team Orbit");
   assert.equal(winnerMarket?.humanAgentDelta, 2);
-  assert.equal(report.rolePerformance.find((role) => role.role === "builder")?.leadingOutcome, "Team Orbit");
   assert.match(report.calaContextPacks[0].operatorPrompt, /Cala context/);
   assert.match(report.pixVersePromoBriefs[0].prompt, /vota\.wtf/);
   assert.ok(analyticsReportRows(report).some((row) => row.section === "market" && row.name === "Who wins MEGATHON?"));
+  const testingReport = buildAdvancedAnalyticsReport(store, "testingmiki");
+  assert.match(testingReport.pixVersePromoBriefs[0].prompt, /testingmiki/);
+  assert.doesNotMatch(testingReport.pixVersePromoBriefs[0].prompt, /MEGATHON/);
 
   const promo = buildReceiptPromo(store, prediction.action.id);
   assert.equal(promo.status, "ready");
@@ -1743,12 +2119,10 @@ test("advanced analytics report includes role, market, Cala, and PixVerse output
   assert.doesNotMatch(promo.pixVersePrompt, /payout/i);
 });
 
-test("leaderboard groups expose role, early caller, and contrarian boards", () => {
+test("leaderboard groups expose human, agent, early caller, and contrarian boards", () => {
   const store = createSeedStore();
   const correct = join(store);
   const wrong = join(store);
-  correct.participant.role = "builder";
-  wrong.participant.role = "sponsor";
   placePrediction(store, {
     participantId: correct.participant.id,
     marketId: SEED_IDS.markets.winner,
@@ -1765,19 +2139,11 @@ test("leaderboard groups expose role, early caller, and contrarian boards", () =
   resolveMarket(store, SEED_IDS.markets.winner, { outcomeId: SEED_IDS.outcomes.orbit, note: "Official stage announcement." });
   const groups = leaderboardGroups(store, "megathon-2026");
   assert.equal(groups.overall[0].id, correct.participant.id);
-  assert.equal(groups.byRole.builder[0].id, correct.participant.id);
-  assert.equal(groups.byRole.sponsor.length, 0);
   assert.equal(groups.humans.some((row) => row.id === correct.participant.id), true);
   assert.equal(groups.earlyCallers[0].id, correct.participant.id);
   assert.equal(groups.contrarianCalls[0].id, correct.participant.id);
   assert.ok(groups.earlyCallers[0].earlyScore > 0);
   assert.ok(groups.contrarianCalls[0].contrarianScore > 0);
-});
-
-test("role winner labels stay chaotic until a role has human signal", () => {
-  const store = createSeedStore();
-  recomputeMarketAggregate(store, SEED_IDS.markets.winner);
-  assert.equal(roleWinnerLabel(store, SEED_IDS.markets.winner, "builder"), "pure chaos");
 });
 
 test("Sunday acceptance loop works through prediction, checkout, resolution, leaderboard, and receipt", () => {
@@ -1848,7 +2214,7 @@ test("Sunday acceptance loop works through prediction, checkout, resolution, lea
   assert.equal(store.events[0].stageMode, "resolution");
   assert.equal(store.events[0].featuredMarketId, SEED_IDS.markets.winner);
   assert.equal(store.markets.find((market) => market.id === SEED_IDS.markets.winner)?.showOnStage, true);
-  assert.equal(store.wallets.find((wallet) => wallet.participantId === participant.id)?.balanceCredits, 850);
+  assert.equal(store.wallets.find((wallet) => wallet.participantId === participant.id)?.balanceCredits, 848);
   assert.equal(
     store.ledgerEntries.some(
       (entry) => entry.type === "resolution_credit" && entry.participantId === participant.id && entry.marketId === SEED_IDS.markets.winner

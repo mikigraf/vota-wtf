@@ -2,11 +2,11 @@ import Link from "next/link";
 import { AdminLiveRefresh } from "@/components/admin-live-refresh";
 import { AdminNav } from "@/components/admin-nav";
 import { AdminPageHeader, ButtonLink, Card, Container, Shell, Stat, StatusPill } from "@/components/ui";
-import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { resolveAdminEvent } from "@/lib/admin-events";
 import { readDataStore } from "@/lib/data";
 import { firstSearchParam } from "@/lib/search-params";
 import { dashboardMetrics, leaderboardGroups } from "@/lib/store";
-import { credits, euro, mbucks } from "@/lib/utils";
+import { baseUrl, credits, euro, mbucks } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +16,7 @@ export default async function AdminDashboard({
   searchParams: Promise<{ eventSlug?: string | string[] }>;
 }) {
   const store = await readDataStore();
-  const requestedSlug = firstSearchParam((await searchParams).eventSlug) || DEFAULT_EVENT_SLUG;
-  const selectedEvent = store.events.find((event) => event.slug === requestedSlug) || store.events.find((event) => event.slug === DEFAULT_EVENT_SLUG) || store.events[0];
+  const { event: selectedEvent, requestedSlug, usedFallback } = resolveAdminEvent(store, firstSearchParam((await searchParams).eventSlug));
   if (!selectedEvent) {
     return (
       <Shell className="bg-admin">
@@ -32,6 +31,7 @@ export default async function AdminDashboard({
   const groups = leaderboardGroups(store, selectedEvent.slug);
   const leaders = groups.overall.slice(0, 5);
   const eventMarkets = store.markets.filter((market) => market.eventId === metrics.event.id);
+  const stageUrl = `${baseUrl().replace(/\/$/, "")}/stage/${metrics.event.slug}`;
   return (
     <Shell className="bg-admin">
       <Container className="grid gap-6">
@@ -39,9 +39,15 @@ export default async function AdminDashboard({
         <AdminPageHeader kicker="Native Next.js admin" title={`${metrics.event.name} control room`}>
           <div className="flex flex-wrap items-center gap-2">
             <AdminLiveRefresh />
+            <ButtonLink href={`/stage/${metrics.event.slug}`} variant="secondary">Stage screen</ButtonLink>
             <ButtonLink href={`/admin/events/${metrics.event.slug}`}>Event detail</ButtonLink>
           </div>
         </AdminPageHeader>
+        {usedFallback ? (
+          <Card className="border-warn bg-warn/15">
+            <p className="text-sm font-bold text-ink">Event not found: {requestedSlug}. Showing {metrics.event.name} instead.</p>
+          </Card>
+        ) : null}
         <section className="grid gap-3 md:grid-cols-4">
           <Stat label="Event status" value={metrics.event.status} />
           <Stat label="Participants" value={metrics.totalParticipants} />
@@ -50,12 +56,19 @@ export default async function AdminDashboard({
           <Stat label="Committed" value={mbucks(metrics.creditsCommitted)} />
           <Stat label="Stage mode" value={metrics.event.stageMode} />
           <Stat label="Emergency pause" value={metrics.event.emergencyPaused ? "On" : "Off"} />
-          <Stat label="Virtual 2% provision" value={mbucks(metrics.virtualProvisionCredits)} />
+          <Stat label="Platform 2% provision" value={mbucks(metrics.virtualProvisionCredits)} />
           <Stat label="Test checkouts" value={metrics.testCheckouts.completed} />
           <Stat label="Projected supporter value" value={euro(metrics.testCheckouts.projectedEur)} />
           <Stat label="Predictions per participant" value={metrics.predictionsPerParticipant.toFixed(1)} />
           <Stat label="Scan-to-first prediction" value={`${Math.round(metrics.scanToFirstPrediction * 100)}%`} />
         </section>
+        <Card className="grid gap-3 md:grid-cols-[1fr_auto] md:items-center">
+          <div>
+            <p className="font-mono-vota text-[10px] font-bold uppercase text-faded">Stage URL</p>
+            <p className="mt-1 break-all font-mono-vota text-sm font-bold text-ink">{stageUrl}</p>
+          </div>
+          <ButtonLink href={`/stage/${metrics.event.slug}`} variant="secondary">Open stage screen</ButtonLink>
+        </Card>
         <section className="grid gap-4 lg:grid-cols-[1fr_360px]">
           <Card>
             <div className="mb-4 flex items-center justify-between gap-3">

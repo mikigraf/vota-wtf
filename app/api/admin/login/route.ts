@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adminApiCookieName, adminCookieName, adminCookieOptions, signAdminToken, verifyAdminPassword } from "@/lib/auth";
 import { adminLoginThrottleStatusData, clearAdminLoginFailuresData, recordAdminLoginFailureData } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
+import { safeAdminNextPath } from "@/lib/safe-paths";
 
 const attempts = new Map<string, { count: number; resetAt: number }>();
 const LOGIN_ATTEMPT_COOKIE = "vota_admin_login_attempt";
@@ -90,10 +91,6 @@ function withAttemptCookie(response: NextResponse, attemptId: string) {
   return response;
 }
 
-function safeAdminNext(value?: unknown) {
-  return typeof value === "string" && value.startsWith("/admin") && !value.startsWith("//") ? value : "/admin";
-}
-
 function loginErrorResponse(request: NextRequest, attemptId: string, message: string, status = 400, next?: unknown) {
   const contentType = request.headers.get("content-type") || "";
   const accept = request.headers.get("accept") || "";
@@ -101,7 +98,7 @@ function loginErrorResponse(request: NextRequest, attemptId: string, message: st
   if (wantsJson) return withAttemptCookie(badRequest(message, status), attemptId);
   const url = new URL("/admin/login", request.url);
   url.searchParams.set("error", message.slice(0, 180));
-  url.searchParams.set("next", safeAdminNext(next));
+  url.searchParams.set("next", safeAdminNextPath(next));
   return withAttemptCookie(NextResponse.redirect(url, { status: 303 }), attemptId);
 }
 
@@ -150,7 +147,7 @@ export async function POST(request: NextRequest) {
     response.cookies.set(adminApiCookieName(), token, adminCookieOptions("/api/admin"));
     return withAttemptCookie(response, attemptId);
   }
-  const response = NextResponse.redirect(new URL(safeAdminNext(body.next), request.url), { status: 303 });
+  const response = NextResponse.redirect(new URL(safeAdminNextPath(body.next), request.url), { status: 303 });
   response.cookies.set(adminCookieName(), token, adminCookieOptions("/admin"));
   response.cookies.set(adminApiCookieName(), token, adminCookieOptions("/api/admin"));
   return withAttemptCookie(response, attemptId);

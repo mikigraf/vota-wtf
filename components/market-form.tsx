@@ -121,13 +121,17 @@ export function ResolveForm({ market, outcomes }: { market: Market; outcomes: Ou
   return (
     <form action={`/api/admin/markets/${market.id}/resolve`} method="post" className="grid gap-3 rounded-xl bg-paper p-4">
       <Field label="Winning outcome">
-        <Select name="outcomeId" defaultValue={market.resolvedOutcomeId}>
+        <Select name="outcomeId" defaultValue={market.resolvedOutcomeId || ""} required>
+          <option value="">Choose the official winner...</option>
           {outcomes.map((outcome) => (
             <option key={outcome.id} value={outcome.id}>
               {outcome.label}
             </option>
           ))}
         </Select>
+      </Field>
+      <Field label="Type the winning outcome label">
+        <TextInput name="confirmOutcomeLabel" placeholder="Exact outcome label" required />
       </Field>
       <Field label="Resolution note">
         <TextArea name="note" defaultValue={market.resolutionNote || "Resolved by organizer/admin."} />

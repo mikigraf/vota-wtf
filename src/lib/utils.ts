@@ -1,4 +1,5 @@
 type ClassValue = string | number | false | null | undefined | Record<string, boolean>;
+export const CANONICAL_PUBLIC_BASE_URL = "https://vota.wtf";
 
 export function cn(...inputs: ClassValue[]) {
   return inputs
@@ -44,8 +45,12 @@ export function euro(value: number) {
   }).format(value);
 }
 
+export function cleanNicknameInput(input: string) {
+  return input.replace(/[^\w .-]/g, "").trim().slice(0, 24);
+}
+
 export function normalizeNickname(input: string) {
-  const cleaned = input.replace(/[^\w .-]/g, "").trim().slice(0, 24);
+  const cleaned = cleanNicknameInput(input);
   return cleaned || `oracle_${Math.floor(Math.random() * 9000 + 1000)}`;
 }
 
@@ -58,21 +63,40 @@ export function isValidEmail(input: string) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+export function normalizeEventSlug(input: string) {
+  return input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48)
+    .replace(/-+$/g, "");
+}
+
 export function normalizeRole(input: string): "builder" | "sponsor" | "investor" | "other" {
   if (input === "builder" || input === "sponsor" || input === "investor") return input;
   return "other";
 }
 
+function trimmedPublicUrl(value?: string) {
+  return value?.trim().replace(/\/$/, "") || "";
+}
+
+function shouldUseCanonicalProductionUrl(value: string) {
+  if (!value) return true;
+  try {
+    const host = new URL(value).hostname;
+    return host !== "vota.wtf";
+  } catch {
+    return true;
+  }
+}
+
 export function baseUrl() {
-  const configured = process.env.NEXT_PUBLIC_BASE_URL;
+  const configured = trimmedPublicUrl(process.env.NEXT_PUBLIC_BASE_URL);
   const vercel = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "";
-  if (configured && process.env.NODE_ENV === "production") {
-    try {
-      const host = new URL(configured).hostname;
-      if ((host === "localhost" || host === "127.0.0.1" || host === "::1") && vercel) return vercel;
-    } catch {
-      return vercel || configured;
-    }
+  if (process.env.NODE_ENV === "production") {
+    return shouldUseCanonicalProductionUrl(configured) ? CANONICAL_PUBLIC_BASE_URL : configured;
   }
   return configured || vercel || "http://localhost:3000";
 }

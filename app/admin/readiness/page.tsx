@@ -1,7 +1,7 @@
 import { AdminLiveRefresh } from "@/components/admin-live-refresh";
 import { AdminNav } from "@/components/admin-nav";
 import { AdminPageHeader, Card, Container, Shell, Stat, StatusPill } from "@/components/ui";
-import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { resolveAdminEvent } from "@/lib/admin-events";
 import { readinessContractData, readDataStore } from "@/lib/data";
 import { buildReadinessReportWithLiveChecks, type ReadinessStatus } from "@/lib/readiness";
 import { firstSearchParam } from "@/lib/search-params";
@@ -19,12 +19,14 @@ export default async function AdminReadinessPage({
 }: {
   searchParams: Promise<{ eventSlug?: string | string[] }>;
 }) {
-  const eventSlug = firstSearchParam((await searchParams).eventSlug) || DEFAULT_EVENT_SLUG;
+  const store = await readDataStore();
+  const { event, requestedSlug, usedFallback } = resolveAdminEvent(store, firstSearchParam((await searchParams).eventSlug));
+  const eventSlug = event?.slug || requestedSlug;
   const contract = await readinessContractData().catch((error) => ({
     ok: false,
     contractVersion: error instanceof Error ? error.message : "contract read failed"
   }));
-  const report = await buildReadinessReportWithLiveChecks(await readDataStore(), process.env, eventSlug, fetch, contract);
+  const report = await buildReadinessReportWithLiveChecks(store, process.env, eventSlug, fetch, contract);
   return (
     <Shell className="bg-admin">
       <Container className="grid gap-6">
@@ -32,6 +34,11 @@ export default async function AdminReadinessPage({
         <AdminPageHeader kicker="Deployment readiness" title="Sunday proof checklist">
           <AdminLiveRefresh />
         </AdminPageHeader>
+        {usedFallback ? (
+          <Card className="border-warn bg-warn/15">
+            <p className="text-sm font-bold text-ink">Event not found: {requestedSlug}. Showing {event?.name || eventSlug} instead.</p>
+          </Card>
+        ) : null}
         <p className="-mt-3 max-w-2xl text-sm font-semibold text-muted">
           Admin-only checks for launch configuration, event data, public evidence links, and optional external integrations.
         </p>

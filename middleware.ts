@@ -18,7 +18,7 @@ function sameOriginAdminMutation(request: NextRequest) {
 }
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
   if (pathname === "/api/admin/login") {
     return NextResponse.next();
   }
@@ -26,7 +26,7 @@ export async function middleware(request: NextRequest) {
     const ok = await isAdminFromRequest(request);
     if (!ok) {
       const login = new URL("/admin/login", request.url);
-      login.searchParams.set("next", pathname);
+      login.searchParams.set("next", `${pathname}${search}`);
       return NextResponse.redirect(login);
     }
   }

@@ -1,10 +1,11 @@
 import { AdminLiveRefresh } from "@/components/admin-live-refresh";
 import { AdminNav } from "@/components/admin-nav";
 import { AdminPageHeader, ButtonLink, Card, Container, Field, Select, Shell, Stat, StatusPill, SubmitButton } from "@/components/ui";
+import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
 import { readDataStore } from "@/lib/data";
 import { firstSearchParam } from "@/lib/search-params";
 import { dashboardMetrics, publicState } from "@/lib/store";
-import { mbucks } from "@/lib/utils";
+import { baseUrl, mbucks } from "@/lib/utils";
 import type { StageMode } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +13,6 @@ export const dynamic = "force-dynamic";
 const modes: Array<{ value: StageMode; label: string }> = [
   { value: "join", label: "Join QR" },
   { value: "live", label: "Live market" },
-  { value: "role_battle", label: "Role battle" },
   { value: "humans_vs_agents", label: "Humans vs Agents" },
   { value: "leaderboard", label: "Leaderboard" },
   { value: "resolution", label: "Resolution reveal" }
@@ -28,17 +28,44 @@ export default async function EventAdminPage({
   const { slug } = await params;
   const error = firstSearchParam((await searchParams).error);
   const store = await readDataStore();
+  const fallbackEvent = store.events.find((event) => event.slug === DEFAULT_EVENT_SLUG) || store.events[0];
+  if (!store.events.some((event) => event.slug === slug)) {
+    return (
+      <Shell className="bg-admin">
+        <Container className="grid gap-6">
+          <AdminNav eventSlug={fallbackEvent?.slug} />
+          <Card className="grid gap-4">
+            <div>
+              <h1 className="text-2xl font-black">Event not found</h1>
+              <p className="mt-2 text-sm font-bold text-muted">
+                This admin link points to a room that no longer exists or is not available in this environment.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <ButtonLink href="/admin/events">All events</ButtonLink>
+              {fallbackEvent ? (
+                <ButtonLink href={`/admin/events/${fallbackEvent.slug}`} variant="secondary">
+                  Open {fallbackEvent.name}
+                </ButtonLink>
+              ) : null}
+            </div>
+          </Card>
+        </Container>
+      </Shell>
+    );
+  }
   const metrics = dashboardMetrics(store, slug);
   const state = publicState(store, slug);
   const markets = store.markets.filter((market) => market.eventId === metrics.event.id);
   const stageMarkets = markets.filter((market) => market.status !== "draft" && market.status !== "voided" && market.showOnStage);
   const activeStageMarkets = stageMarkets.filter((market) => market.status !== "resolved");
   const resolvedStageMarkets = stageMarkets.filter((market) => market.status === "resolved");
+  const stageUrl = `${baseUrl().replace(/\/$/, "")}/stage/${slug}`;
   const stageWarning =
     stageMarkets.length === 0
       ? "No stage-visible markets are available yet. Open a market and keep Show on stage enabled before switching to a market mode."
       : activeStageMarkets.length === 0
-        ? "Live, role battle, and humans-vs-agents modes need an open or locked stage-visible market."
+        ? "Live and humans-vs-agents modes need an open or locked stage-visible market."
       : resolvedStageMarkets.length === 0
         ? "Resolution reveal becomes available after a market is resolved."
         : "";
@@ -59,10 +86,14 @@ export default async function EventAdminPage({
           <Stat label="Status" value={metrics.event.status} />
           <Stat label="Stage mode" value={metrics.event.stageMode} />
           <Stat label="Participants" value={metrics.totalParticipants} />
-          <Stat label="Provision" value={mbucks(metrics.virtualProvisionCredits)} />
+          <Stat label="Platform provision" value={mbucks(metrics.virtualProvisionCredits)} />
         </section>
         <Card className="bg-ink text-white">
           <h2 className="text-xl font-black">Control room</h2>
+          <div className="mt-3 rounded-xl border border-white/15 bg-white/10 p-3">
+            <p className="font-mono-vota text-[10px] font-bold uppercase text-white/55">Stage URL</p>
+            <p className="mt-1 break-all font-mono-vota text-xs font-bold text-white">{stageUrl}</p>
+          </div>
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <ButtonLink href={`/stage/${slug}`} variant="secondary">Open stage</ButtonLink>
             <ButtonLink href={`/admin/markets/new?eventSlug=${encodeURIComponent(slug)}`} variant="secondary">New market</ButtonLink>
@@ -95,7 +126,7 @@ export default async function EventAdminPage({
                 ))}
               </Select>
               <span className="text-xs font-semibold text-muted">
-                Live/role modes use open or locked markets. Resolution mode uses resolved markets.
+                Live and humans-vs-agents modes use open or locked markets. Resolution mode uses resolved markets.
               </span>
               {stageWarning ? <span className="text-xs font-semibold text-muted">{stageWarning}</span> : null}
             </Field>

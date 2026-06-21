@@ -4,13 +4,14 @@ import { generatedAvatarDataUrl, isGeneratedAvatarUrl } from "@/lib/avatar";
 import { findNextOpenMarketData, getSessionParticipantData, updateParticipantProfileData } from "@/lib/data";
 import { badRequest, json, readJsonObject } from "@/lib/http";
 import { hasCompletedProfile } from "@/lib/participants";
+import { publicParticipant } from "@/lib/store";
 import { saveAvatarDataUrl } from "@/lib/uploads";
-import { isValidEmail, normalizeEmail, normalizeNickname } from "@/lib/utils";
+import { cleanNicknameInput, isValidEmail, normalizeEmail, normalizeNickname } from "@/lib/utils";
 
 export async function GET(request: NextRequest) {
   const session = await getSessionParticipantData(getParticipantSessionIdFromRequest(request));
   if (!session) return badRequest("No participant session.", 401);
-  return json({ participant: session.participant, wallet: session.wallet });
+  return json({ participant: publicParticipant(session.participant), wallet: session.wallet });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -22,6 +23,7 @@ export async function PATCH(request: NextRequest) {
   const rawNickname = String(body.nickname || "").trim();
   const rawEmail = String(body.email || "").trim();
   if (!rawNickname) return badRequest("Enter a stage name before joining.");
+  if (!cleanNicknameInput(rawNickname)) return badRequest("Use letters, numbers, spaces, dots, dashes, or underscores for your stage name.");
   if (!isValidEmail(rawEmail)) return badRequest("Enter your email address before joining.");
   const nickname = normalizeNickname(rawNickname);
   const email = normalizeEmail(rawEmail);
@@ -49,5 +51,5 @@ export async function PATCH(request: NextRequest) {
     return badRequest(error instanceof Error ? error.message : "Could not join.");
   }
   const nextMarket = await findNextOpenMarketData(session.participant.eventId);
-  return json({ participant, nextMarketId: nextMarket?.id });
+  return json({ participant: publicParticipant(participant), nextMarketId: nextMarket?.id });
 }

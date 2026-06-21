@@ -4,14 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { QrCode } from "@/components/qr-code";
 import { subscribeToSupabaseRealtime } from "@/lib/supabase-realtime";
 import { credits, mbucks, pct } from "@/lib/utils";
-import type { LeaderboardGroups, PublicMarketState, Role, StageMode } from "@/lib/types";
-
-const roleLabels: Record<Role, string> = {
-  builder: "Builders",
-  sponsor: "Sponsors",
-  investor: "Investors",
-  other: "Other"
-};
+import type { LeaderboardGroups, PublicMarketState, StageMode } from "@/lib/types";
 
 const stageChartColors = ["#FF5A1F", "#6E6E68", "#18C97B", "#F0C000", "#1f9bd1", "#6b55d7", "#FF5A5A", "#3a3a3c"];
 
@@ -25,9 +18,14 @@ interface StageState {
     emergencyPaused: boolean;
   };
   markets: PublicMarketState[];
-  leaderboard: Array<{ id: string; nickname: string; oracleScore: number; role: Role }>;
+  leaderboard: Array<{ id: string; nickname: string; oracleScore: number }>;
   leaderboardGroups?: LeaderboardGroups;
-  roleWinners: Record<Role, string>;
+}
+
+function isCompatibleStageMarket(stageMode: StageMode, market: PublicMarketState) {
+  if (stageMode === "join" || stageMode === "leaderboard") return true;
+  if (stageMode === "resolution") return market.status === "resolved";
+  return market.status === "open" || market.status === "locked";
 }
 
 function burstConfetti() {
@@ -59,7 +57,10 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
   const [refreshFailed, setRefreshFailed] = useState(false);
   const lastResolved = useRef<string | undefined>(undefined);
   const lastSignalSignature = useRef<string | undefined>(undefined);
-  const stageMarkets = useMemo(() => state.markets.filter((item) => item.status !== "voided" && item.showOnStage), [state.markets]);
+  const stageMarkets = useMemo(
+    () => state.markets.filter((item) => item.status !== "voided" && item.showOnStage && isCompatibleStageMarket(state.event.stageMode, item)),
+    [state.event.stageMode, state.markets]
+  );
   const market = useMemo(
     () => stageMarkets.find((item) => item.id === state.event.featuredMarketId) || stageMarkets[0],
     [stageMarkets, state.event.featuredMarketId]
@@ -97,8 +98,7 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
         event: publicState.event,
         markets: publicState.markets,
         leaderboard: leaderboard.leaderboard,
-        leaderboardGroups: leaderboard.groups || current.leaderboardGroups,
-        roleWinners: publicState.roleWinners || current.roleWinners
+        leaderboardGroups: leaderboard.groups || current.leaderboardGroups
       }));
     } catch {
       setRefreshFailed(true);
@@ -108,7 +108,7 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
 
   useEffect(() => {
     const stopRealtime = subscribeToSupabaseRealtime(refresh);
-    const timer = window.setInterval(refresh, 1000);
+    const timer = window.setInterval(refresh, 2500);
     return () => {
       stopRealtime();
       window.clearInterval(timer);
@@ -135,12 +135,12 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
 
   if (state.event.stageMode === "join") {
     return (
-      <div className="stage-grid flex min-h-screen items-center justify-center bg-white p-4 sm:p-8">
-        <div className="grid w-full max-w-5xl gap-8 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-center">
+      <div className="stage-grid flex min-h-[100dvh] items-center justify-center bg-white p-4 sm:p-8">
+        <div className="grid w-full max-w-6xl gap-8 lg:grid-cols-[minmax(0,1fr)_440px] lg:items-center">
           <div>
             <div className="font-expanded text-6xl font-black leading-none sm:text-8xl lg:text-9xl">vota.wtf</div>
             <p className="font-expanded mt-6 text-3xl font-black leading-tight sm:text-5xl">WTF does the room believe?</p>
-            <p className="mt-4 text-xl font-bold text-muted sm:text-2xl">Scan to predict the MEGATHON winners.</p>
+            <p className="mt-4 text-xl font-bold text-muted sm:text-2xl">Scan to predict {state.event.name}.</p>
             <p className="mt-3 text-xl font-extrabold text-ember">No real-money payouts. Correct calls settle internal MegaBucks.</p>
             {paused ? (
               <div className="mt-5 rounded-2xl border border-danger bg-danger/10 p-4 text-xl font-black text-danger">
@@ -148,8 +148,8 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
               </div>
             ) : null}
           </div>
-          <div className="mx-auto w-full max-w-[320px] rounded-2xl border border-line bg-white p-4 shadow-panel sm:p-6">
-            <QrCode value={joinUrl} title="Join vota.wtf QR code" />
+          <div className="mx-auto w-full max-w-[460px] rounded-2xl border border-line bg-white p-4 shadow-panel sm:p-6">
+            <QrCode value={joinUrl} title="Join vota.wtf QR code" className="aspect-square w-full max-w-[440px] bg-white" />
             <p className="font-mono-vota mt-4 break-all text-center text-sm font-bold sm:text-lg">{joinUrl.replace(/^https?:\/\//, "")}</p>
           </div>
         </div>
@@ -173,10 +173,8 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
           <div className="mt-6 grid gap-4 md:grid-cols-2">
             <StageBoard title="Humans" rows={state.leaderboardGroups.humans.slice(0, 4)} />
             <StageBoard title="Agents" rows={state.leaderboardGroups.agents.slice(0, 4)} />
-            <StageBoard title="Builders" rows={state.leaderboardGroups.byRole.builder.slice(0, 4)} />
-            <StageBoard title="Sponsors" rows={state.leaderboardGroups.byRole.sponsor.slice(0, 4)} />
-            <StageBoard title="Investors" rows={state.leaderboardGroups.byRole.investor.slice(0, 4)} />
-            <StageBoard title="Other" rows={state.leaderboardGroups.byRole.other.slice(0, 4)} />
+            <StageBoard title="Early callers" rows={state.leaderboardGroups.earlyCallers.slice(0, 4)} metric="earlyScore" />
+            <StageBoard title="Contrarian calls" rows={state.leaderboardGroups.contrarianCalls.slice(0, 4)} metric="contrarianScore" />
           </div>
         ) : null}
       </StageFrame>
@@ -204,21 +202,6 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
               Signal unlocks in {market.blindLaunch.remainingPredictions} more predictions.
             </div>
           </div>
-        </div>
-      </StageFrame>
-    );
-  }
-
-  if (state.event.stageMode === "role_battle") {
-    return (
-      <StageFrame title="Role Battle" subtitle="Builders, sponsors, investors, and everyone else call the room differently." paused={paused} joinUrl={joinUrl} stale={refreshFailed}>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {(["builder", "sponsor", "investor", "other"] as Role[]).map((role) => (
-            <div key={role} className="rounded-2xl bg-white p-6">
-              <div className="font-mono-vota text-sm font-bold uppercase text-faded">{role}</div>
-              <div className="font-expanded mt-3 text-4xl font-black">{state.roleWinners[role] || "pure chaos"}</div>
-            </div>
-          ))}
         </div>
       </StageFrame>
     );
@@ -258,11 +241,6 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
       outcome
         ? [...market.outcomes].sort((a, b) => b.peopleSignal - a.peopleSignal).findIndex((item) => item.id === outcome.id) + 1
         : 0;
-    const roleCalls = (["builder", "sponsor", "investor", "other"] as Role[]).map((role) => ({
-      role,
-      label: state.roleWinners[role] || "pure chaos",
-      matched: outcome ? state.roleWinners[role] === outcome.label : false
-    }));
     return (
       <StageFrame title="The judges chose" subtitle={market.title} paused={paused} joinUrl={joinUrl} stale={refreshFailed}>
         <div className="font-expanded rounded-2xl bg-ember p-6 text-center text-5xl font-black leading-none text-white sm:p-10 sm:text-7xl">
@@ -270,15 +248,6 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
         </div>
         <div className="mt-5 rounded-2xl bg-white p-5 text-2xl font-black sm:text-3xl">
           The crowd had it at {crowdRank > 0 ? `#${crowdRank}` : "no clear rank"}.
-        </div>
-        <div className="mt-4 grid gap-3 md:grid-cols-4">
-          {roleCalls.map((call) => (
-            <div key={call.role} className="rounded-2xl bg-white p-4">
-              <div className="font-mono-vota text-xs font-bold uppercase text-faded">{roleLabels[call.role]}</div>
-              <div className="mt-2 text-2xl font-black">{call.matched ? "Called it" : "Missed"}</div>
-              <div className="mt-1 text-sm font-bold text-muted">{call.label}</div>
-            </div>
-          ))}
         </div>
         <h2 className="font-expanded mt-6 text-3xl font-black">Top Oracles</h2>
         <div className="mt-3 grid gap-3">
@@ -315,7 +284,6 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
           {showAgentLayer ? "Show People/MegaBuck Signal" : "Compare Humans/Agents"}
         </button>
       </div>
-      {!showAgentLayer ? <StageOddsTimeline market={market} /> : null}
       <div className="grid gap-4">
         {market.outcomes.map((outcome) => (
           <div key={outcome.id} className={`rounded-2xl bg-white p-5 ${pulseClass}`}>
@@ -339,6 +307,7 @@ export function StageView({ initial, joinUrl }: { initial: StageState; joinUrl: 
           </div>
         ))}
       </div>
+      {!showAgentLayer ? <StageOddsTimeline market={market} /> : null}
     </StageFrame>
   );
 }
@@ -367,12 +336,12 @@ function StageOddsTimeline({ market }: { market: PublicMarketState }) {
       })
       .join(" ");
   return (
-    <div className="mb-5 rounded-2xl bg-white p-5">
+    <div className="mt-5 rounded-2xl bg-white p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="font-expanded text-2xl font-black">Odds over time</div>
         <div className="font-mono-vota text-xs font-bold uppercase text-faded">Room Signal</div>
       </div>
-      <svg className="mt-3 h-56 w-full overflow-visible rounded-xl bg-ink p-1" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Odds over time">
+      <svg className="mt-3 h-40 w-full overflow-visible rounded-xl bg-ink p-1 xl:h-48" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Odds over time">
         {[0.25, 0.5, 0.75].map((line) => (
           <line
             key={line}
@@ -397,7 +366,7 @@ function StageOddsTimeline({ market }: { market: PublicMarketState }) {
           />
         ))}
       </svg>
-      <div className="mt-3 grid gap-2 md:grid-cols-2">
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
         {market.outcomes.map((outcome, index) => (
           <div key={outcome.id} className="flex items-center justify-between gap-3 rounded-xl bg-paper p-3 text-sm font-black">
             <span className="flex min-w-0 items-center gap-2">
@@ -414,10 +383,12 @@ function StageOddsTimeline({ market }: { market: PublicMarketState }) {
 
 function StageBoard({
   title,
-  rows
+  rows,
+  metric = "oracleScore"
 }: {
   title: string;
-  rows: Array<{ id: string; nickname: string; oracleScore: number }>;
+  rows: Array<{ id: string; nickname: string; oracleScore: number; earlyScore?: number; contrarianScore?: number }>;
+  metric?: "oracleScore" | "earlyScore" | "contrarianScore";
 }) {
   return (
     <div className="rounded-2xl bg-white p-5">
@@ -428,7 +399,7 @@ function StageBoard({
           <div key={`${title}-${row.id}`} className="grid grid-cols-[40px_1fr_auto] rounded-xl bg-paper p-3 text-xl font-black">
             <span className="font-mono-vota text-faded">{index + 1}</span>
             <span className="min-w-0 break-words">{row.nickname}</span>
-            <span className="font-mono-vota text-right text-ember">{credits(row.oracleScore)}</span>
+            <span className="font-mono-vota text-right text-ember">{credits(row[metric] || 0)}</span>
           </div>
         ))}
       </div>
@@ -453,12 +424,12 @@ function StageFrame({
 }) {
   return (
     <div
-      className="stage-grid min-h-screen bg-white p-4 sm:p-8"
+      className="stage-grid min-h-[100dvh] bg-white p-4 sm:p-6 xl:p-8"
       data-testid="stage-root"
       data-stale={stale ? "true" : "false"}
     >
       <div className="mx-auto max-w-7xl">
-        <div className="mb-8 grid gap-5 lg:grid-cols-[minmax(0,1fr)_260px] lg:items-start">
+        <div className="mb-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start xl:mb-8">
           <div>
             <h1 className="font-expanded break-words text-5xl font-black leading-none sm:text-7xl lg:text-8xl">{title}</h1>
             <p className="mt-4 break-words text-xl font-bold text-muted sm:text-2xl">{subtitle}</p>
@@ -484,8 +455,8 @@ function StageFrame({
 function CompactStageQr({ joinUrl }: { joinUrl: string }) {
   return (
     <div className="rounded-2xl border border-line bg-white p-4 shadow-panel">
-      <div className="mx-auto max-w-[220px]">
-        <QrCode value={joinUrl} title="Join vota.wtf QR code" />
+      <div className="mx-auto max-w-[300px]">
+        <QrCode value={joinUrl} title="Join vota.wtf QR code" className="aspect-square w-full max-w-[300px] bg-white" />
       </div>
       <p className="font-mono-vota mt-3 break-all text-center text-xs font-black uppercase text-faded">
         Join {joinUrl.replace(/^https?:\/\//, "")}

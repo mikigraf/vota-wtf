@@ -2,6 +2,7 @@ import { createQrMatrix } from "@/components/qr-code";
 import { DEFAULT_EVENT_SLUG } from "./constants";
 import { dashboardMetrics, publicState } from "./store";
 import type { PublicEventState, Store } from "./types";
+import { CANONICAL_PUBLIC_BASE_URL } from "./utils";
 
 export type ReadinessStatus = "pass" | "warn" | "fail";
 
@@ -29,7 +30,7 @@ export type ReadinessContract = Record<string, unknown>;
 
 type EnvShape = Record<string, string | undefined>;
 type FetchLike = typeof fetch;
-const EXPECTED_SUPABASE_CONTRACT_VERSION = "035_email_unique_names_no_roles";
+const EXPECTED_SUPABASE_CONTRACT_VERSION = "048_hot_path_indexes";
 
 const proofEnvVars = [
   ["NEXT_PUBLIC_PROOF_REPO_URL", "Public repo / commit"],
@@ -78,6 +79,16 @@ function isLocalUrl(value?: string) {
   }
 }
 
+function isCanonicalPublicUrl(value?: string) {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname === "vota.wtf";
+  } catch {
+    return false;
+  }
+}
+
 function mollieTestKeyReady(value?: string) {
   const trimmed = value?.trim() || "";
   if (!trimmed.startsWith("test_")) return false;
@@ -85,15 +96,17 @@ function mollieTestKeyReady(value?: string) {
   return !/(xxx|placeholder|replace|example|abc123)/i.test(trimmed);
 }
 
-function runtimeChecks(env: EnvShape): ReadinessCheck[] {
+function runtimeChecks(env: EnvShape, eventSlug = DEFAULT_EVENT_SLUG): ReadinessCheck[] {
   const production = env.NODE_ENV === "production";
   const backend = env.VOTA_DATA_BACKEND || (production ? "supabase" : "local");
   const baseUrl = env.NEXT_PUBLIC_BASE_URL || "";
-  const effectiveBaseUrl = baseUrl || (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : "");
-  const normalJoinUrl = effectiveBaseUrl ? `${effectiveBaseUrl.replace(/\/$/, "")}/j/${DEFAULT_EVENT_SLUG}` : "";
+  const effectiveBaseUrl = production
+    ? CANONICAL_PUBLIC_BASE_URL
+    : baseUrl || (env.VERCEL_URL ? `https://${env.VERCEL_URL}` : "");
+  const normalJoinUrl = effectiveBaseUrl ? `${effectiveBaseUrl.replace(/\/$/, "")}/j/${eventSlug}` : "";
   const normalQrIsShort = normalJoinUrl ? new TextEncoder().encode(normalJoinUrl).length <= 134 : true;
   const qrBase = env.NEXT_PUBLIC_QR_BASE_URL?.replace(/\/$/, "") || "";
-  const qrJoinUrl = normalQrIsShort ? normalJoinUrl : qrBase ? `${qrBase}/j/${DEFAULT_EVENT_SLUG}` : normalJoinUrl;
+  const qrJoinUrl = normalQrIsShort ? normalJoinUrl : qrBase ? `${qrBase}/j/${eventSlug}` : normalJoinUrl;
   const qrBaseReady =
     normalQrIsShort ||
     (isUrl(env.NEXT_PUBLIC_QR_BASE_URL) && !isLocalUrl(env.NEXT_PUBLIC_QR_BASE_URL) && (!production || isHttpsUrl(env.NEXT_PUBLIC_QR_BASE_URL)));
@@ -108,7 +121,9 @@ function runtimeChecks(env: EnvShape): ReadinessCheck[] {
   }
   const adminPasswordReady =
     configured(env.ADMIN_PASSWORD, ["change-me-for-megathon"]) && (env.ADMIN_PASSWORD || "").length >= 12;
-  const baseUrlReady = isUrl(baseUrl) && !isLocalUrl(baseUrl) && (!production || isHttpsUrl(baseUrl));
+  const baseUrlReady = production
+    ? (!baseUrl || isCanonicalPublicUrl(baseUrl))
+    : isUrl(baseUrl) && !isLocalUrl(baseUrl) && isHttpsUrl(baseUrl);
   return [
     check(
       "admin-password",
@@ -157,16 +172,16 @@ function runtimeChecks(env: EnvShape): ReadinessCheck[] {
       "Public base URL",
       baseUrlReady ? "pass" : production ? "fail" : "warn",
       baseUrlReady
-        ? "Base URL is available for QR, checkout return links, and receipts."
-        : "Set NEXT_PUBLIC_BASE_URL to the deployed HTTPS public origin before capturing proof."
+        ? `Generated public URLs use ${CANONICAL_PUBLIC_BASE_URL}.`
+        : `Set NEXT_PUBLIC_BASE_URL=${CANONICAL_PUBLIC_BASE_URL} or leave it unset; do not use a Vercel preview URL.`
     ),
     check(
       "stage-qr-base",
       "Stage QR base",
       qrBaseReady && qrMatrixReady ? "pass" : production ? "fail" : "warn",
       qrBaseReady && qrMatrixReady
-        ? "Stage QR uses an encodable deployed join URL or explicit compact QR base."
-        : "Set NEXT_PUBLIC_QR_BASE_URL to a short deployed HTTPS origin when the public join URL is too long for the stage QR."
+        ? `Stage QR verifies the selected join path /j/${eventSlug}.`
+        : `Set NEXT_PUBLIC_QR_BASE_URL to a short deployed HTTPS origin when /j/${eventSlug} is too long for the stage QR.`
     )
   ];
 }
@@ -366,7 +381,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
         "supabase-contract",
         "Supabase contract",
         "fail",
-        "Could not read the live Supabase contract. Run migrations through 035_email_unique_names_no_roles.sql."
+        "Could not read the live Supabase contract. Run migrations through 048_hot_path_indexes.sql."
       )
     ];
   }
@@ -378,6 +393,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
     ["profileLockRpc", "Profile lock RPC"],
     ["participantEmailColumn", "Participant email column"],
     ["participantUniqueNameIndex", "Unique participant stage-name index"],
+    ["participantUniqueEmailIndex", "Unique participant email index"],
     ["poolSettlementRpc", "Winner-pool settlement RPC"],
     ["voidMarketRpc", "Void market RPC"],
     ["transitionMarketRpc", "Market transition RPC"],
@@ -393,7 +409,22 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
     ["positionsSameEventTrigger", "Position event integrity trigger"],
     ["predictionActionsSameEventTrigger", "Prediction action event integrity trigger"],
     ["stageFeatureNormalizeTrigger", "Stage feature normalize trigger"],
-    ["ledgerSettlementColumns", "Ledger settlement columns"]
+    ["ledgerSettlementColumns", "Ledger settlement columns"],
+    ["repurposedSeedMarket", "Repurposed seed market"],
+    ["neutralHouseAgentNames", "Neutral house agent names"],
+    ["roleBattleStageModeRemoved", "Legacy role battle stage mode removed"],
+    ["megathonTestingmikiMarketsSeeded", "Megathon and testingmiki room markets seeded"],
+    ["checkoutReturnPathScoped", "Checkout return path scoping"],
+    ["participantModerationRpc", "Participant moderation transaction RPC"],
+    ["marketAggregatesPrivate", "Private aggregate table access"],
+    ["marketAggregatesNotRealtime", "Private aggregates removed from realtime"],
+    ["platformParticipantType", "Platform account participant type"],
+    ["platformProvisionLedgerType", "Platform provision ledger type"],
+    ["platformMainAccount", "Main platform provision account"],
+    ["platformProvisionSettlement", "Platform provision settlement"],
+    ["positionsMarketSignalIndex", "Positions market signal index"],
+    ["predictionActionsMarketCreatedIndex", "Prediction actions market timeline index"],
+    ["participantSessionsParticipantActiveIndex", "Participant active session index"]
   ];
   const contractVersion = String(contract.contractVersion || "unknown contract");
   const hasExpectedContractVersion =
@@ -418,7 +449,7 @@ function supabaseContractChecks(contract?: ReadinessContract): ReadinessCheck[] 
 
 function readinessGroups(store: Store, env: EnvShape, eventSlug: string, contract?: ReadinessContract): ReadinessGroup[] {
   const groups: ReadinessGroup[] = [
-    { title: "Runtime", checks: runtimeChecks(env) },
+    { title: "Runtime", checks: runtimeChecks(env, eventSlug) },
     { title: "Event Data", checks: eventChecks(store, eventSlug) },
     { title: "Public Proof", checks: proofChecks(env) },
     { title: "Optional P2 Integrations", checks: optionalIntegrationChecks(env) }
@@ -431,7 +462,7 @@ function readinessGroups(store: Store, env: EnvShape, eventSlug: string, contrac
 
 function publicReadinessGroups(state: PublicEventState, env: EnvShape, eventSlug: string): ReadinessGroup[] {
   return [
-    { title: "Runtime", checks: runtimeChecks(env) },
+    { title: "Runtime", checks: runtimeChecks(env, eventSlug) },
     { title: "Event Data", checks: publicEventChecks(state, eventSlug) },
     { title: "Public Proof", checks: proofChecks(env) },
     { title: "Optional P2 Integrations", checks: optionalIntegrationChecks(env) }

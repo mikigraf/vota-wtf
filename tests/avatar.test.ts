@@ -10,14 +10,14 @@ test("generated avatars are deterministic SVG data URLs", () => {
   assert.equal(isGeneratedAvatarUrl(first), true);
   assert.match(decodeSvg(first), /data-vota-avatar="1"/);
   assert.match(decodeSvg(first), />DD</);
-  assert.match(decodeSvg(first), />BUILDER</);
+  assert.doesNotMatch(decodeSvg(first), />BUILDER|>SPONSOR|>INVESTOR|>OTHER/);
 });
 
 test("generated avatars escape normalized nickname initials", () => {
   const svg = decodeSvg(generatedAvatarDataUrl("<xscript", "sponsor"));
   assert.doesNotMatch(svg, /<script/i);
   assert.match(svg, />XS</);
-  assert.match(svg, />SPONSOR</);
+  assert.doesNotMatch(svg, />BUILDER|>SPONSOR|>INVESTOR|>OTHER/);
 });
 
 test("generated avatar detection ignores uploaded and remote images", () => {

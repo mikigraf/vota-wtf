@@ -8,11 +8,13 @@ import {
   FAIR_LAUNCH_PEOPLE,
   FAIR_LAUNCH_SIGNAL_CREDITS,
   INITIAL_STAKE_AMOUNT,
+  LEGACY_EVENT_SLUG,
   LIVESTREAM_DEMO_EVENT_SLUG,
   MAX_ACTION_STAKE,
   MAX_AGENT_MARKET_SHARE,
   MAX_HUMAN_MARKET_SHARE,
   MAX_PRICE_IMPACT,
+  PLATFORM_PROVISION_RATE,
   PLATFORM_PRIOR_CREDITS_PER_OUTCOME,
   STARTER_CREDITS,
   TEST_CHECKOUT_CREDITS,
@@ -39,6 +41,7 @@ import type {
   PredictionPreview,
   PublicEventState,
   PublicMarketState,
+  PublicParticipant,
   Purchase,
   CheckoutIntent,
   Role,
@@ -47,7 +50,7 @@ import type {
   UserMarketState,
   Wallet
 } from "./types";
-import { clamp, isValidEmail, makeId, normalizeEmail, normalizeNickname, normalizeRole, nowIso } from "./utils";
+import { clamp, cleanNicknameInput, isValidEmail, makeId, normalizeEmail, normalizeEventSlug, normalizeNickname, normalizeRole, nowIso } from "./utils";
 
 const defaultDataDir = path.join(process.cwd(), ".data");
 const defaultDataFile = path.join(defaultDataDir, "vota-dev-store.json");
@@ -65,7 +68,7 @@ function storePaths() {
   };
 }
 
-const liveStageModes = new Set<StageMode>(["live", "role_battle", "humans_vs_agents"]);
+const liveStageModes = new Set<StageMode>(["live", "humans_vs_agents"]);
 
 function isCompatibleStageMarket(stageMode: StageMode, market: Market) {
   if (stageMode === "resolution") return market.status === "resolved";
@@ -91,9 +94,24 @@ function refreshFeaturedMarketAfterRemoval(store: Store, event: EventRecord, rem
   if (!fallback && event.stageMode !== "leaderboard") event.stageMode = "join";
 }
 
+export function publicParticipant(participant: Participant): PublicParticipant {
+  return {
+    id: participant.id,
+    eventId: participant.eventId,
+    participantType: participant.participantType,
+    nickname: participant.nickname,
+    avatarUrl: participant.isAvatarHidden ? undefined : participant.avatarUrl,
+    isAvatarHidden: participant.isAvatarHidden,
+    isBanned: participant.isBanned,
+    oracleScore: participant.oracleScore,
+    createdAt: participant.createdAt
+  };
+}
+
 export const SEED_IDS = {
   event: "00000000-0000-4000-8000-000000000001",
   livestreamEvent: "00000000-0000-4000-8000-000000000002",
+  platformParticipant: "00000000-0000-4000-8000-00000000f001",
   markets: {
     winner: "00000000-0000-4000-8000-000000000101",
     demoFail: "00000000-0000-4000-8000-000000000102",
@@ -119,6 +137,7 @@ export const SEED_IDS = {
 } as const;
 
 const MIN_SCORING_WINDOW_MS = 60_000;
+const PLATFORM_ACCOUNT_NICKNAME = "vota.wtf Platform";
 
 function emptyRoleBreakdown(): Record<Role, Record<string, number>> {
   return {
@@ -140,6 +159,69 @@ function defaultAggregate(marketId: string): MarketAggregate {
     agentBreakdown: { human: {}, agent: {} },
     updatedAt: nowIso()
   };
+}
+
+function isAgentParticipant(participant: Participant) {
+  return participant.participantType === "house_agent" || participant.participantType === "external_agent";
+}
+
+export function ensurePlatformAccount(store: Store, createdAt = nowIso()) {
+  const event = store.events.find((item) => item.slug === DEFAULT_EVENT_SLUG) ||
+    store.events.find((item) => item.slug === "megathon") ||
+    store.events[0];
+  if (!event) throw new Error("Platform account needs at least one event.");
+  let changed = false;
+  let participant =
+    store.participants.find((item) => item.participantType === "platform") ||
+    store.participants.find((item) => item.id === SEED_IDS.platformParticipant);
+  if (!participant) {
+    participant = {
+      id: SEED_IDS.platformParticipant,
+      eventId: event.id,
+      participantType: "platform",
+      nickname: PLATFORM_ACCOUNT_NICKNAME,
+      role: "other",
+      isAvatarHidden: true,
+      isBanned: false,
+      oracleScore: 0,
+      createdAt
+    };
+    store.participants.push(participant);
+    changed = true;
+  } else {
+    if (participant.participantType !== "platform") {
+      participant.participantType = "platform";
+      changed = true;
+    }
+    if (participant.nickname !== PLATFORM_ACCOUNT_NICKNAME) {
+      participant.nickname = PLATFORM_ACCOUNT_NICKNAME;
+      changed = true;
+    }
+    if (participant.role !== "other") {
+      participant.role = "other";
+      changed = true;
+    }
+    if (!participant.isAvatarHidden) {
+      participant.isAvatarHidden = true;
+      changed = true;
+    }
+    if (participant.isBanned) {
+      participant.isBanned = false;
+      changed = true;
+    }
+  }
+  let wallet = store.wallets.find((item) => item.participantId === participant.id);
+  if (!wallet) {
+    wallet = {
+      participantId: participant.id,
+      balanceCredits: 0,
+      totalIssuedCredits: 0,
+      totalCommittedCredits: 0
+    };
+    store.wallets.push(wallet);
+    changed = true;
+  }
+  return { participant, wallet, changed };
 }
 
 function seedUuid(group: string, index: number) {
@@ -279,6 +361,8 @@ function addLivestreamDemoPredictions(store: Store, createdAt: string) {
 export function createSeedStore(): Store {
   const now = nowIso();
   const eventId = SEED_IDS.event;
+  const megathonRoomEventId = "00000000-0000-4000-8000-000000000901";
+  const testingmikiEventId = "00000000-0000-4000-8000-000000000902";
   const markets: Market[] = [
     {
       id: SEED_IDS.markets.winner,
@@ -327,12 +411,12 @@ export function createSeedStore(): Store {
     {
       id: SEED_IDS.markets.role,
       eventId,
-      title: "Which role predicts best?",
-      description: "The room calls whether Builders, Sponsors, Investors, or Other guests top Oracle Score.",
-      category: "Role battle",
-      imageUrl: "/role-battle.svg",
+      title: "Which moment gets the loudest reaction?",
+      description: "The room calls the ceremony moment that will make the audience erupt first.",
+      category: "Audience pulse",
+      imageUrl: "/demo-signal.svg",
       status: "open",
-      resolutionRule: "Resolved from final role leaderboard after judging.",
+      resolutionRule: "Resolved by the host based on the loudest in-room reaction during the ceremony.",
       showOnStage: false,
       fairLaunchOverride: false,
       fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
@@ -368,6 +452,141 @@ export function createSeedStore(): Store {
       openedAt: now,
       createdAt: now,
       updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001001",
+      eventId: megathonRoomEventId,
+      title: "Who wins Megathon?",
+      description: "Pick the team the room thinks will win the final announcement.",
+      category: "Finals",
+      imageUrl: "/stage-gradient.svg",
+      status: "open",
+      resolutionRule: "Official final winner announced by the Megathon judges on stage.",
+      showOnStage: true,
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
+      fairLaunchSignalCreditsThreshold: FAIR_LAUNCH_SIGNAL_CREDITS,
+      maxActionStake: MAX_ACTION_STAKE,
+      allowSwitching: true,
+      blindLaunchEnabled: true,
+      blindLaunchPredictionThreshold: BLIND_LAUNCH_PREDICTIONS,
+      blindLaunchSeconds: BLIND_LAUNCH_SECONDS,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001002",
+      eventId: megathonRoomEventId,
+      title: "Will a live demo need a rescue?",
+      description: "Any visible restart, emergency fallback, or presenter apology counts.",
+      category: "Demo",
+      imageUrl: "/demo-signal.svg",
+      status: "open",
+      resolutionRule: "Resolved by organizer observation during the Megathon ceremony.",
+      showOnStage: true,
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
+      fairLaunchSignalCreditsThreshold: FAIR_LAUNCH_SIGNAL_CREDITS,
+      maxActionStake: MAX_ACTION_STAKE,
+      allowSwitching: true,
+      blindLaunchEnabled: true,
+      blindLaunchPredictionThreshold: BLIND_LAUNCH_PREDICTIONS,
+      blindLaunchSeconds: BLIND_LAUNCH_SECONDS,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001003",
+      eventId: megathonRoomEventId,
+      title: "Which moment gets the loudest reaction?",
+      description: "Call the ceremony moment that makes the audience erupt first.",
+      category: "Audience pulse",
+      imageUrl: "/demo-signal.svg",
+      status: "open",
+      resolutionRule: "Resolved by the host based on the loudest in-room reaction.",
+      showOnStage: true,
+      fairLaunchOverride: false,
+      fairLaunchPeopleThreshold: FAIR_LAUNCH_PEOPLE,
+      fairLaunchSignalCreditsThreshold: FAIR_LAUNCH_SIGNAL_CREDITS,
+      maxActionStake: MAX_ACTION_STAKE,
+      allowSwitching: true,
+      blindLaunchEnabled: true,
+      blindLaunchPredictionThreshold: BLIND_LAUNCH_PREDICTIONS,
+      blindLaunchSeconds: BLIND_LAUNCH_SECONDS,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001101",
+      eventId: testingmikiEventId,
+      title: "Who wins testingmiki?",
+      description: "Test room market for rehearsing the full participant and admin flow.",
+      category: "Testing",
+      imageUrl: "/stage-gradient.svg",
+      status: "open",
+      resolutionRule: "Resolved by the test admin during rehearsal.",
+      showOnStage: true,
+      fairLaunchOverride: true,
+      fairLaunchPeopleThreshold: 1,
+      fairLaunchSignalCreditsThreshold: INITIAL_STAKE_AMOUNT,
+      maxActionStake: 500,
+      allowSwitching: true,
+      blindLaunchEnabled: false,
+      blindLaunchPredictionThreshold: 1,
+      blindLaunchSeconds: 10,
+      blindLaunchEndedAt: now,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001102",
+      eventId: testingmikiEventId,
+      title: "Will testingmiki resolve cleanly?",
+      description: "A rehearsal card for lock, resolve, leaderboard, and receipt checks.",
+      category: "Testing",
+      imageUrl: "/demo-signal.svg",
+      status: "open",
+      resolutionRule: "Resolved by the test admin after verifying the rehearsal flow.",
+      showOnStage: true,
+      fairLaunchOverride: true,
+      fairLaunchPeopleThreshold: 1,
+      fairLaunchSignalCreditsThreshold: INITIAL_STAKE_AMOUNT,
+      maxActionStake: 500,
+      allowSwitching: true,
+      blindLaunchEnabled: false,
+      blindLaunchPredictionThreshold: 1,
+      blindLaunchSeconds: 10,
+      blindLaunchEndedAt: now,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
+    },
+    {
+      id: "00000000-0000-4000-8000-000000001103",
+      eventId: testingmikiEventId,
+      title: "Which testingmiki signal moves fastest?",
+      description: "Rehearsal card for odds movement, blind launch, and stage momentum checks.",
+      category: "Testing",
+      imageUrl: "/demo-signal.svg",
+      status: "open",
+      resolutionRule: "Resolved by the test admin after watching the rehearsal odds timeline.",
+      showOnStage: true,
+      fairLaunchOverride: true,
+      fairLaunchPeopleThreshold: 1,
+      fairLaunchSignalCreditsThreshold: INITIAL_STAKE_AMOUNT,
+      maxActionStake: 500,
+      allowSwitching: true,
+      blindLaunchEnabled: false,
+      blindLaunchPredictionThreshold: 1,
+      blindLaunchSeconds: 10,
+      blindLaunchEndedAt: now,
+      openedAt: now,
+      createdAt: now,
+      updatedAt: now
     }
   ];
   const outcomes: Outcome[] = [
@@ -377,19 +596,36 @@ export function createSeedStore(): Store {
     { id: SEED_IDS.outcomes.other, marketId: SEED_IDS.markets.winner, label: "Other", icon: "?" },
     { id: SEED_IDS.outcomes.failYes, marketId: SEED_IDS.markets.demoFail, label: "Yes, chaos wins", icon: "!" },
     { id: SEED_IDS.outcomes.failNo, marketId: SEED_IDS.markets.demoFail, label: "No, clean demos", icon: "OK" },
-    { id: SEED_IDS.outcomes.roleBuilders, marketId: SEED_IDS.markets.role, label: "Builders", icon: "B" },
-    { id: SEED_IDS.outcomes.roleSponsors, marketId: SEED_IDS.markets.role, label: "Sponsors", icon: "S" },
-    { id: SEED_IDS.outcomes.roleInvestors, marketId: SEED_IDS.markets.role, label: "Investors", icon: "I" },
-    { id: SEED_IDS.outcomes.roleOther, marketId: SEED_IDS.markets.role, label: "Other", icon: "*" },
+    { id: SEED_IDS.outcomes.roleBuilders, marketId: SEED_IDS.markets.role, label: "Winner reveal", icon: "WR" },
+    { id: SEED_IDS.outcomes.roleSponsors, marketId: SEED_IDS.markets.role, label: "Demo surprise", icon: "DS" },
+    { id: SEED_IDS.outcomes.roleInvestors, marketId: SEED_IDS.markets.role, label: "Founder cameo", icon: "FC" },
+    { id: SEED_IDS.outcomes.roleOther, marketId: SEED_IDS.markets.role, label: "Crowd upset", icon: "CU" },
     { id: SEED_IDS.outcomes.livestreamAiDemo, marketId: SEED_IDS.markets.livestream, label: "AI demo lands perfectly", icon: "AI" },
     { id: SEED_IDS.outcomes.livestreamAudienceUpset, marketId: SEED_IDS.markets.livestream, label: "Audience vote upset", icon: "UP" },
     { id: SEED_IDS.outcomes.livestreamFounderCameo, marketId: SEED_IDS.markets.livestream, label: "Founder cameo", icon: "FC" },
-    { id: SEED_IDS.outcomes.livestreamGlitchRecovery, marketId: SEED_IDS.markets.livestream, label: "Live glitch recovery", icon: "GG" }
+    { id: SEED_IDS.outcomes.livestreamGlitchRecovery, marketId: SEED_IDS.markets.livestream, label: "Live glitch recovery", icon: "GG" },
+    { id: "00000000-0000-4000-8000-000000001011", marketId: "00000000-0000-4000-8000-000000001001", label: "Team Orbit", icon: "O" },
+    { id: "00000000-0000-4000-8000-000000001012", marketId: "00000000-0000-4000-8000-000000001001", label: "Team Nova", icon: "N" },
+    { id: "00000000-0000-4000-8000-000000001013", marketId: "00000000-0000-4000-8000-000000001001", label: "Team Atlas", icon: "A" },
+    { id: "00000000-0000-4000-8000-000000001014", marketId: "00000000-0000-4000-8000-000000001001", label: "Other", icon: "?" },
+    { id: "00000000-0000-4000-8000-000000001021", marketId: "00000000-0000-4000-8000-000000001002", label: "Yes, rescue needed", icon: "!" },
+    { id: "00000000-0000-4000-8000-000000001022", marketId: "00000000-0000-4000-8000-000000001002", label: "No, clean demos", icon: "OK" },
+    { id: "00000000-0000-4000-8000-000000001031", marketId: "00000000-0000-4000-8000-000000001003", label: "Winner reveal", icon: "WR" },
+    { id: "00000000-0000-4000-8000-000000001032", marketId: "00000000-0000-4000-8000-000000001003", label: "Demo surprise", icon: "DS" },
+    { id: "00000000-0000-4000-8000-000000001033", marketId: "00000000-0000-4000-8000-000000001003", label: "Founder cameo", icon: "FC" },
+    { id: "00000000-0000-4000-8000-000000001111", marketId: "00000000-0000-4000-8000-000000001101", label: "Team Orbit", icon: "O" },
+    { id: "00000000-0000-4000-8000-000000001112", marketId: "00000000-0000-4000-8000-000000001101", label: "Team Nova", icon: "N" },
+    { id: "00000000-0000-4000-8000-000000001113", marketId: "00000000-0000-4000-8000-000000001101", label: "Team Atlas", icon: "A" },
+    { id: "00000000-0000-4000-8000-000000001121", marketId: "00000000-0000-4000-8000-000000001102", label: "Yes", icon: "Y" },
+    { id: "00000000-0000-4000-8000-000000001122", marketId: "00000000-0000-4000-8000-000000001102", label: "No", icon: "N" },
+    { id: "00000000-0000-4000-8000-000000001131", marketId: "00000000-0000-4000-8000-000000001103", label: "Orbit surge", icon: "OS" },
+    { id: "00000000-0000-4000-8000-000000001132", marketId: "00000000-0000-4000-8000-000000001103", label: "Demo rescue", icon: "DR" },
+    { id: "00000000-0000-4000-8000-000000001133", marketId: "00000000-0000-4000-8000-000000001103", label: "Crowd flip", icon: "CF" }
   ];
   const events: EventRecord[] = [
     {
       id: eventId,
-      slug: DEFAULT_EVENT_SLUG,
+      slug: LEGACY_EVENT_SLUG,
       name: "MEGATHON 2026",
       status: "live",
       starterCredits: STARTER_CREDITS,
@@ -410,23 +646,25 @@ export function createSeedStore(): Store {
       createdAt: now
     },
     {
-      id: "00000000-0000-4000-8000-000000000901",
+      id: megathonRoomEventId,
       slug: "megathon",
       name: "megathon",
       status: "live",
       starterCredits: STARTER_CREDITS,
       emergencyPaused: false,
       stageMode: "join",
+      featuredMarketId: "00000000-0000-4000-8000-000000001001",
       createdAt: now
     },
     {
-      id: "00000000-0000-4000-8000-000000000902",
+      id: testingmikiEventId,
       slug: "testingmiki",
       name: "testingmiki",
       status: "live",
       starterCredits: STARTER_CREDITS,
       emergencyPaused: false,
       stageMode: "join",
+      featuredMarketId: "00000000-0000-4000-8000-000000001101",
       createdAt: now
     }
   ];
@@ -449,7 +687,74 @@ export function createSeedStore(): Store {
     mcpTokens: []
   };
   addLivestreamDemoPredictions(store, now);
+  ensurePlatformAccount(store, now);
   return store;
+}
+
+const defaultRoomSeedSlugs = new Set(["megathon", "testingmiki"]);
+let defaultRoomSeedCache: Store | undefined;
+
+function defaultRoomSeedStore() {
+  defaultRoomSeedCache ||= createSeedStore();
+  return defaultRoomSeedCache;
+}
+
+function ensureDefaultRoomSeeds(store: Store) {
+  const seed = defaultRoomSeedStore();
+  const targetSeedEvents = seed.events.filter((event) => defaultRoomSeedSlugs.has(event.slug));
+  const seedEventIds = new Set(targetSeedEvents.map((event) => event.id));
+  const seedMarketIds = new Set(seed.markets.filter((market) => seedEventIds.has(market.eventId)).map((market) => market.id));
+  const targetEventIdBySeedEventId = new Map<string, string>();
+  let changed = false;
+
+  for (const seedEvent of targetSeedEvents) {
+    let event = store.events.find((item) => item.slug === seedEvent.slug);
+    if (!event) {
+      event = { ...seedEvent };
+      store.events.push(event);
+      changed = true;
+    }
+    targetEventIdBySeedEventId.set(seedEvent.id, event.id);
+  }
+
+  for (const seedMarket of seed.markets.filter((market) => seedMarketIds.has(market.id))) {
+    const eventId = targetEventIdBySeedEventId.get(seedMarket.eventId);
+    if (!eventId) continue;
+    let market = store.markets.find((item) => item.id === seedMarket.id);
+    if (!market) {
+      market = { ...seedMarket, eventId };
+      store.markets.push(market);
+      changed = true;
+    } else if (market.eventId !== eventId) {
+      market.eventId = eventId;
+      changed = true;
+    }
+  }
+
+  for (const seedOutcome of seed.outcomes.filter((outcome) => seedMarketIds.has(outcome.marketId))) {
+    if (store.outcomes.some((item) => item.id === seedOutcome.id)) continue;
+    store.outcomes.push({ ...seedOutcome });
+    changed = true;
+  }
+
+  for (const marketId of seedMarketIds) {
+    if (store.marketAggregates.some((item) => item.marketId === marketId)) continue;
+    store.marketAggregates.push(defaultAggregate(marketId));
+    changed = true;
+  }
+
+  for (const seedEvent of targetSeedEvents) {
+    const event = store.events.find((item) => item.slug === seedEvent.slug);
+    if (!event || event.featuredMarketId) continue;
+    const seedFeaturedMarket = seedEvent.featuredMarketId
+      ? store.markets.find((market) => market.id === seedEvent.featuredMarketId && market.eventId === event.id)
+      : undefined;
+    if (!seedFeaturedMarket) continue;
+    event.featuredMarketId = seedFeaturedMarket.id;
+    changed = true;
+  }
+
+  return changed;
 }
 
 export function readStore(): Store {
@@ -463,6 +768,8 @@ export function readStore(): Store {
   const store = JSON.parse(fs.readFileSync(dataFile, "utf8")) as Store;
   store.mcpTokens ||= [];
   store.checkoutIntents ||= [];
+  const backfilledDefaultRooms = ensureDefaultRoomSeeds(store);
+  const platformAccount = ensurePlatformAccount(store);
   for (const market of store.markets) {
     market.fairLaunchPeopleThreshold ??= FAIR_LAUNCH_PEOPLE;
     market.fairLaunchSignalCreditsThreshold ??= FAIR_LAUNCH_SIGNAL_CREDITS;
@@ -474,6 +781,7 @@ export function readStore(): Store {
     action.convictionSignalSnapshot ||= {};
     action.stageSignalSnapshot ||= {};
   }
+  if (backfilledDefaultRooms || platformAccount.changed) writeStore(store);
   return store;
 }
 
@@ -582,7 +890,7 @@ export function createParticipantSession(store: Store, eventSlug = DEFAULT_EVENT
     amountCredits: event.starterCredits,
     direction: "credit",
     balanceAfter: event.starterCredits,
-    reason: "Starter MegaBucks for joining MEGATHON",
+    reason: `Starter MegaBucks for joining ${event.name}`,
     createdAt: now
   };
   store.participants.push(participant);
@@ -602,6 +910,7 @@ export function updateParticipantProfile(
   if (participant.participantType === "human" && hasCompletedProfile(participant)) {
     throw new Error("Profile is locked after entering the arena.");
   }
+  if (!cleanNicknameInput(input.nickname)) throw new Error("Use letters, numbers, spaces, dots, dashes, or underscores for your stage name.");
   const nickname = normalizeNickname(input.nickname);
   const email = normalizeEmail(input.email || "");
   if (!nickname || nickname === "oracle") throw new Error("Enter a stage name before joining.");
@@ -614,6 +923,14 @@ export function updateParticipantProfile(
       item.nickname.trim().toLowerCase() === nickname.toLowerCase()
   );
   if (duplicate) throw new Error("That stage name is already taken.");
+  const duplicateEmail = store.participants.find(
+    (item) =>
+      item.id !== participant.id &&
+      item.eventId === participant.eventId &&
+      item.participantType === "human" &&
+      normalizeEmail(item.email || "") === email
+  );
+  if (duplicateEmail) throw new Error("That email is already in the arena.");
   const previousRole = participant.role;
   participant.nickname = nickname;
   participant.email = email;
@@ -648,6 +965,8 @@ export function recomputeMarketAggregate(store: Store, marketId: string) {
     const participant = store.participants.find((item) => item.id === position.participantId);
     if (!participant || participant.isBanned) continue;
     const isHuman = participant.participantType === "human";
+    const isAgent = isAgentParticipant(participant);
+    if (!isHuman && !isAgent) continue;
     if (isHuman) aggregate.totalPeople += 1;
     aggregate.totalSignalCredits += position.signalCredits;
     if (isHuman) {
@@ -689,6 +1008,8 @@ function participantScopedAggregate(
     const participant = store.participants.find((item) => item.id === position.participantId);
     if (!participant || participant.isBanned || !includeParticipant(participant)) continue;
     const isHuman = participant.participantType === "human";
+    const isAgent = isAgentParticipant(participant);
+    if (!isHuman && !isAgent) continue;
     if (isHuman) {
       aggregate.totalPeople += 1;
       aggregate.outcomePeopleCounts[position.outcomeId] = (aggregate.outcomePeopleCounts[position.outcomeId] || 0) + 1;
@@ -849,7 +1170,7 @@ export function marketIsInFairLaunch(store: Store, market: Market) {
 }
 
 function signalFromAmount(amountCredits: number) {
-  const feeCredits = Math.floor(amountCredits * 0.02);
+  const feeCredits = Math.floor(amountCredits * PLATFORM_PROVISION_RATE);
   return { feeCredits, signalCredits: amountCredits - feeCredits };
 }
 
@@ -962,6 +1283,9 @@ export function calculateAllowedStake(
   if (participant.isBanned) {
     return { allowedAdd: 0, reason: "This profile is paused by moderation.", fairLaunch: false, minInitial: 100, cooldownRemainingSeconds: 0, parts: {} };
   }
+  if (participant.participantType === "platform") {
+    return { allowedAdd: 0, reason: "The platform provision account cannot predict.", fairLaunch: false, minInitial: 100, cooldownRemainingSeconds: 0, parts: {} };
+  }
   if (participant.eventId !== market.eventId) {
     return { allowedAdd: 0, reason: "This profile cannot predict in another event.", fairLaunch: false, minInitial: 100, cooldownRemainingSeconds: 0, parts: {} };
   }
@@ -987,6 +1311,19 @@ export function calculateAllowedStake(
       parts: {
         availableCredits: wallet.balanceCredits,
         fairLaunch: INITIAL_STAKE_AMOUNT
+      }
+    };
+  }
+  if (!position && wallet.balanceCredits < INITIAL_STAKE_AMOUNT) {
+    return {
+      allowedAdd: 0,
+      reason: `First prediction needs ${INITIAL_STAKE_AMOUNT} MBucks. Add MBucks to enter this market.`,
+      fairLaunch: false,
+      minInitial: INITIAL_STAKE_AMOUNT,
+      cooldownRemainingSeconds: 0,
+      parts: {
+        availableCredits: wallet.balanceCredits,
+        minInitial: INITIAL_STAKE_AMOUNT
       }
     };
   }
@@ -1094,6 +1431,7 @@ export function placePrediction(
   if (participant.eventId !== market.eventId) throw new Error("This profile cannot predict in another event.");
   if (market.status !== "open") throw new Error("This prediction is not open.");
   if (participant.isBanned) throw new Error("This profile is paused by moderation.");
+  if (participant.participantType === "platform") throw new Error("The platform provision account cannot predict.");
   if (participant.participantType === "human" && !hasCompletedProfile(participant)) throw new Error("Finish your profile before predicting.");
   const event = store.events.find((item) => item.id === market.eventId);
   if (event?.emergencyPaused) throw new Error("The arena is paused by the organizer.");
@@ -1322,7 +1660,7 @@ export function userMarketState(
   );
   const receipt = participant?.isBanned ? undefined : receiptActionsForParticipant(store, input.participantId, input.marketId)[0];
   return {
-    participant,
+    participant: participant ? publicParticipant(participant) : undefined,
     wallet,
     position: position ? { ...position, outcomeLabel: outcome?.label } : undefined,
     allowedByOutcome,
@@ -1355,7 +1693,8 @@ export function predictionPreview(
       allowed.cooldownRemainingSeconds <= 0 &&
       (marketIsInFairLaunch(store, market) || isSwitchImpactAllowed(aggregate, position!.outcomeId, outcome.id, position!.signalCredits, 0))
   );
-  const blocked = requested > allowed.allowedAdd || (allowed.allowedAdd <= 0 && !zeroMegaBuckSwitchAllowed);
+  const fairLaunchAmountInvalid = Boolean(allowed.fairLaunch && requested !== allowed.minInitial);
+  const blocked = fairLaunchAmountInvalid || requested > allowed.allowedAdd || (allowed.allowedAdd <= 0 && !zeroMegaBuckSwitchAllowed);
   const appliedAmount = blocked ? 0 : Math.min(requested, allowed.allowedAdd);
   const addedSignal = signalFromAmount(appliedAmount).signalCredits;
   const peopleCounts = { ...aggregate.outcomePeopleCounts };
@@ -1385,7 +1724,11 @@ export function predictionPreview(
     amountCredits: requested,
     allowedAdd: allowed.allowedAdd,
     blocked,
-    reason: requested > allowed.allowedAdd ? `Too much conviction for this market right now. Max allowed: ${allowed.allowedAdd} MegaBucks.` : allowed.reason,
+    reason: fairLaunchAmountInvalid
+      ? `Fair launch: first prediction is exactly ${allowed.minInitial} MBucks.`
+      : requested > allowed.allowedAdd
+        ? `Too much conviction for this market right now. Max allowed: ${allowed.allowedAdd} MegaBucks.`
+        : allowed.reason,
     before: {
       peopleSignal: before.people[outcome.id] || 0,
       creditSignal: before.credit[outcome.id] || 0,
@@ -1412,8 +1755,6 @@ export function publicState(store: Store, slug = DEFAULT_EVENT_SLUG): PublicEven
   const featuredMarketId =
     stageMarkets.find((market) => market.id === event.featuredMarketId && isCompatibleStageMarket(event.stageMode, market))?.id ||
     stageMarkets.find((market) => isCompatibleStageMarket(event.stageMode, market))?.id;
-  const featuredMarket = featuredMarketId ? rawMarkets.find((market) => market.id === featuredMarketId) : undefined;
-  const hideRoleWinners = Boolean(featuredMarket && blindLaunchState(store, featuredMarket).active);
   return {
     event: {
       slug: event.slug,
@@ -1423,20 +1764,7 @@ export function publicState(store: Store, slug = DEFAULT_EVENT_SLUG): PublicEven
       featuredMarketId,
       emergencyPaused: event.emergencyPaused
     },
-    markets,
-    roleWinners: featuredMarketId && !hideRoleWinners
-      ? {
-          builder: roleWinnerLabel(store, featuredMarketId, "builder"),
-          sponsor: roleWinnerLabel(store, featuredMarketId, "sponsor"),
-          investor: roleWinnerLabel(store, featuredMarketId, "investor"),
-          other: roleWinnerLabel(store, featuredMarketId, "other")
-        }
-      : {
-          builder: "pure chaos",
-          sponsor: "pure chaos",
-          investor: "pure chaos",
-          other: "pure chaos"
-        }
+    markets
   };
 }
 
@@ -1451,6 +1779,51 @@ export function createAuditLog(
   };
   store.adminAuditLogs.push(log);
   return log;
+}
+
+export function createEvent(
+  store: Store,
+  input: {
+    name: string;
+    slug?: string;
+    status?: EventRecord["status"];
+    starterCredits?: number;
+    auditIp?: string;
+  }
+) {
+  const name = input.name.trim().slice(0, 80);
+  if (!name) throw new Error("Event name is required.");
+  const slug = normalizeEventSlug(input.slug || name);
+  if (!slug) throw new Error("Event slug is required.");
+  if (store.events.some((event) => event.slug === slug)) throw new Error("That event slug is already in use.");
+  const statuses: EventRecord["status"][] = ["draft", "live", "paused", "finished"];
+  const status = input.status && statuses.includes(input.status) ? input.status : "live";
+  const now = nowIso();
+  const event: EventRecord = {
+    id: makeId("evt"),
+    slug,
+    name,
+    status,
+    starterCredits: clamp(Math.floor(Number(input.starterCredits || STARTER_CREDITS)), 100, 1_000_000),
+    emergencyPaused: false,
+    stageMode: "join",
+    createdAt: now
+  };
+  store.events.push(event);
+  createAuditLog(store, {
+    action: "create_event",
+    entityType: "event",
+    entityId: event.id,
+    details: {
+      eventId: event.id,
+      eventSlug: event.slug,
+      name: event.name,
+      status: event.status,
+      starterCredits: event.starterCredits
+    },
+    ip: input.auditIp
+  });
+  return event;
 }
 
 export function createMarket(
@@ -1724,15 +2097,21 @@ function settleResolvedMarketCredits(store: Store, market: Market, outcomeId: st
   const losingPool = marketPositions
     .filter((position) => position.outcomeId !== outcomeId)
     .reduce((sum, position) => sum + position.rawCredits, 0);
+  const netStake = (position: Position) => Math.max(0, position.rawCredits - position.feeCredits);
+  const netWinningPool = winningPositions.reduce((sum, position) => sum + netStake(position), 0);
+  const netLosingPool = marketPositions
+    .filter((position) => position.outcomeId !== outcomeId)
+    .reduce((sum, position) => sum + netStake(position), 0);
+  const platformProvisionCredits = marketPositions.reduce((sum, position) => sum + Math.max(0, position.feeCredits), 0);
   const poolShares = new Map<string, number>();
-  if (winningPool > 0) {
+  if (netWinningPool > 0) {
     let assignedPool = 0;
     for (const position of winningPositions) {
-      const share = Math.floor((losingPool * position.rawCredits) / winningPool);
+      const share = Math.floor((netLosingPool * netStake(position)) / netWinningPool);
       poolShares.set(position.id, share);
       assignedPool += share;
     }
-    let remainder = losingPool - assignedPool;
+    let remainder = netLosingPool - assignedPool;
     for (const position of winningPositions) {
       if (remainder <= 0) break;
       poolShares.set(position.id, (poolShares.get(position.id) || 0) + 1);
@@ -1752,7 +2131,8 @@ function settleResolvedMarketCredits(store: Store, market: Market, outcomeId: st
     const wallet = store.wallets.find((item) => item.participantId === position.participantId);
     if (!wallet) throw new Error("Wallet not found.");
     const poolShare = poolShares.get(position.id) || 0;
-    const payoutCredits = position.rawCredits + poolShare;
+    const stakeReturned = netStake(position);
+    const payoutCredits = stakeReturned + poolShare;
     wallet.balanceCredits += payoutCredits;
     store.ledgerEntries.push({
       id: makeId("led"),
@@ -1763,13 +2143,60 @@ function settleResolvedMarketCredits(store: Store, market: Market, outcomeId: st
       balanceAfter: wallet.balanceCredits,
       reason: `Resolved prediction credit: ${market.title}`,
       marketId: market.id,
-      metadata: { outcomeId, stakeReturned: position.rawCredits, poolShare, losingPool, winningPool },
+      metadata: {
+        outcomeId,
+        stakeReturned,
+        rawStake: position.rawCredits,
+        stakeProvision: position.feeCredits,
+        poolShare,
+        losingPool,
+        winningPool,
+        netLosingPool,
+        netWinningPool
+      },
       createdAt
     });
     settledCount += 1;
     settledCredits += payoutCredits;
   }
-  return { settledCount, settledCredits };
+  if (platformProvisionCredits > 0) {
+    const alreadyProvisioned = store.ledgerEntries.some(
+      (entry) => entry.type === "platform_provision" && entry.marketId === market.id
+    );
+    if (!alreadyProvisioned) {
+      const { participant, wallet } = ensurePlatformAccount(store, createdAt);
+      wallet.balanceCredits += platformProvisionCredits;
+      store.ledgerEntries.push({
+        id: makeId("led"),
+        participantId: participant.id,
+        type: "platform_provision",
+        amountCredits: platformProvisionCredits,
+        direction: "credit",
+        balanceAfter: wallet.balanceCredits,
+        reason: `Platform 2% provision: ${market.title}`,
+        marketId: market.id,
+        metadata: {
+          rate: PLATFORM_PROVISION_RATE,
+          winningPool,
+          losingPool,
+          netWinningPool,
+          netLosingPool,
+          unclaimedPool: netWinningPool === 0 ? netLosingPool : 0
+        },
+        createdAt
+      });
+    }
+  }
+  return {
+    settledCount,
+    settledCredits,
+    winningPool,
+    losingPool,
+    netWinningPool,
+    netLosingPool,
+    platformProvisionCredits,
+    unclaimedPool: netWinningPool === 0 ? netLosingPool : 0
+  };
 }
 
 export function resolveMarket(
@@ -1809,7 +2236,13 @@ export function resolveMarket(
       outcomeId: outcome.id,
       note: market.resolutionNote,
       settledCount: settlement.settledCount,
-      settledCredits: settlement.settledCredits
+      settledCredits: settlement.settledCredits,
+      winningPool: settlement.winningPool,
+      losingPool: settlement.losingPool,
+      netWinningPool: settlement.netWinningPool,
+      netLosingPool: settlement.netLosingPool,
+      platformProvisionCredits: settlement.platformProvisionCredits,
+      unclaimedPool: settlement.unclaimedPool
     },
     ip: input.auditIp
   });
@@ -1932,7 +2365,7 @@ function oracleScoreForReceiptAction(action: PredictionAction, minutesBeforeLock
 export function leaderboard(store: Store, eventSlug = DEFAULT_EVENT_SLUG): LeaderboardRow[] {
   const event = getEventOrThrow(store, eventSlug);
   return store.participants
-    .filter((participant) => participant.eventId === event.id && !participant.isBanned)
+    .filter((participant) => participant.eventId === event.id && participant.participantType !== "platform" && !participant.isBanned)
     .map((participant) => {
       const actions = store.predictionActions.filter((action) => action.participantId === participant.id && action.actionType !== "admin_void");
       const lifetimeCommitted = actions.reduce((sum, action) => sum + Math.max(0, action.amountCredits), 0);
@@ -1950,7 +2383,6 @@ export function leaderboard(store: Store, eventSlug = DEFAULT_EVENT_SLUG): Leade
       return {
         id: participant.id,
         nickname: participant.nickname,
-        role: participant.role,
         participantType: participant.participantType,
         avatarUrl: participant.isAvatarHidden ? undefined : participant.avatarUrl,
         oracleScore: participant.oracleScore,
@@ -1967,18 +2399,10 @@ export function leaderboard(store: Store, eventSlug = DEFAULT_EVENT_SLUG): Leade
 export function leaderboardGroups(store: Store, eventSlug = DEFAULT_EVENT_SLUG): LeaderboardGroups {
   const overall = leaderboard(store, eventSlug);
   const scored = overall.filter((row) => row.oracleScore > 0);
-  const byRole = (["builder", "sponsor", "investor", "other"] as Role[]).reduce<LeaderboardGroups["byRole"]>(
-    (acc, role) => {
-      acc[role] = scored.filter((row) => row.role === role);
-      return acc;
-    },
-    { builder: [], sponsor: [], investor: [], other: [] }
-  );
   return {
     overall,
-    byRole,
     humans: scored.filter((row) => row.participantType === "human"),
-    agents: scored.filter((row) => row.participantType !== "human"),
+    agents: scored.filter((row) => row.participantType !== "human" && row.participantType !== "platform"),
     earlyCallers: [...scored]
       .filter((row) => row.earlyScore > 0)
       .sort((a, b) => b.earlyScore - a.earlyScore || b.oracleScore - a.oracleScore || a.nickname.localeCompare(b.nickname)),
@@ -1988,7 +2412,7 @@ export function leaderboardGroups(store: Store, eventSlug = DEFAULT_EVENT_SLUG):
   };
 }
 
-export function createPurchase(store: Store, participantId: string) {
+export function createPurchase(store: Store, participantId: string, returnTo?: string) {
   const purchase: Purchase = {
     id: makeId("pur"),
     participantId,
@@ -1996,6 +2420,7 @@ export function createPurchase(store: Store, participantId: string) {
     amountEur: TEST_CHECKOUT_EUR,
     currency: "EUR",
     credits: TEST_CHECKOUT_CREDITS,
+    returnTo,
     createdAt: nowIso()
   };
   store.purchases.push(purchase);
@@ -2099,16 +2524,24 @@ export function creditPaidPurchase(store: Store, purchaseId: string, status: "pa
 
 export function upsertHouseAgents(store: Store, eventSlug = DEFAULT_EVENT_SLUG) {
   const event = getEventOrThrow(store, eventSlug);
-  const definitions: Array<{ name: string; role: Role; strategy: AgentProfile["strategy"] }> = [
-    { name: "Builder Agent", role: "builder", strategy: "builder_bias" },
-    { name: "Sponsor Agent", role: "sponsor", strategy: "sponsor_bias" },
-    { name: "Investor Agent", role: "investor", strategy: "investor_bias" },
+  const definitions: Array<{ name: string; oldNames?: string[]; role: Role; strategy: AgentProfile["strategy"] }> = [
+    { name: "Signal Scout", oldNames: ["Builder Agent"], role: "builder", strategy: "builder_bias" },
+    { name: "Momentum Scout", oldNames: ["Sponsor Agent"], role: "sponsor", strategy: "sponsor_bias" },
+    { name: "Value Scout", oldNames: ["Investor Agent"], role: "investor", strategy: "investor_bias" },
     { name: "Skeptic Agent", role: "other", strategy: "skeptic" },
     { name: "Chaos Agent", role: "other", strategy: "chaos" }
   ];
   const agents: AgentProfile[] = [];
   for (const definition of definitions) {
-    let agent = store.agentProfiles.find((item) => item.eventId === event.id && item.name === definition.name);
+    const existingAgent = store.agentProfiles.find((item) =>
+      item.eventId === event.id && (item.name === definition.name || Boolean(definition.oldNames?.includes(item.name)))
+    );
+    let agent = existingAgent;
+    if (existingAgent) {
+      existingAgent.name = definition.name;
+      const participant = store.participants.find((item) => item.id === existingAgent.participantId);
+      if (participant) participant.nickname = definition.name;
+    }
     if (!agent) {
       const participantId = makeId("agtpar");
       const now = nowIso();
@@ -2148,7 +2581,7 @@ export function upsertHouseAgents(store: Store, eventSlug = DEFAULT_EVENT_SLUG) 
 export function chooseHouseAgentMove(store: Store, input: { eventSlug: string; agentId?: string; marketId: string }) {
   const event = getEventOrThrow(store, input.eventSlug);
   const agents = store.agentProfiles.filter((item) => item.eventId === event.id);
-  const market = store.markets.find((item) => item.id === input.marketId);
+  const market = store.markets.find((item) => item.id === input.marketId && item.eventId === event.id);
   if (!market) throw new Error("Market not found");
   const agent = input.agentId ? agents.find((item) => item.id === input.agentId) : agents[Math.floor(Math.random() * agents.length)];
   if (!agent) throw new Error("Agent not found");
@@ -2215,7 +2648,10 @@ export function paymentMetrics(store: Store, participantIds?: Set<string>) {
     projectedEur: credited.reduce((sum, purchase) => sum + purchase.amountEur, 0),
     intentCount: checkoutIntents.length,
     intentClicks: checkoutIntents.reduce((sum, intent) => sum + intent.clickCount, 0),
-    intentProjectedEur: checkoutIntents.reduce((sum, intent) => sum + intent.amountEur, 0)
+    intentProjectedEur: checkoutIntents.reduce((sum, intent) => sum + intent.amountEur, 0),
+    intentClickProjectedEur: checkoutIntents.reduce((sum, intent) => sum + intent.amountEur * intent.clickCount, 0),
+    intentCredits: checkoutIntents.reduce((sum, intent) => sum + intent.credits, 0),
+    intentClickCredits: checkoutIntents.reduce((sum, intent) => sum + intent.credits * intent.clickCount, 0)
   };
 }
 
@@ -2252,15 +2688,6 @@ export function dashboardMetrics(store: Store, eventSlug = DEFAULT_EVENT_SLUG) {
   };
 }
 
-export function roleWinnerLabel(store: Store, marketId: string, role: Role) {
-  const aggregate = getAggregate(store, marketId);
-  const entries = Object.entries(aggregate.roleBreakdown[role] || {});
-  if (entries.length === 0) return "pure chaos";
-  const [outcomeId, count] = entries.sort((a, b) => b[1] - a[1])[0];
-  if (count <= 0) return "pure chaos";
-  return store.outcomes.find((outcome) => outcome.id === outcomeId)?.label || "pure chaos";
-}
-
 export function participantReceipt(store: Store, participantId: string | undefined, receiptId: string) {
   const action = store.predictionActions.find((item) => item.id === receiptId);
   const targetParticipant = action
@@ -2271,13 +2698,14 @@ export function participantReceipt(store: Store, participantId: string | undefin
   const receipt = action
     ? receiptActionsForParticipant(store, targetParticipant.id, action.marketId).find((item) => item.action.id === action.id)
     : receiptActionsForParticipant(store, targetParticipant.id)[0];
-  if (!receipt) return { participant: targetParticipant };
+  const participant = publicParticipant(targetParticipant);
+  if (!receipt) return { participant };
   const market = receipt.market;
   const outcome = store.outcomes.find((item) => item.id === receipt.action.outcomeId);
   const peopleAtCall = market.resolvedOutcomeId ? receipt.action.peopleSignalSnapshot[market.resolvedOutcomeId] || 0 : 0;
   const closingStageSignal = market.resolvedOutcomeId ? receipt.action.closingStageSignalSnapshot?.[market.resolvedOutcomeId] : undefined;
   const oracleScore = oracleScoreForReceiptAction(receipt.action, receipt.minutesBeforeLock, receipt.entryStageSignal);
-  return { participant: targetParticipant, market, outcome, peopleAtCall, closingStageSignal, oracleScore };
+  return { participant, market, outcome, peopleAtCall, closingStageSignal, oracleScore };
 }
 
 export type { ParticipantType };
