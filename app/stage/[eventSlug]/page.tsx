@@ -1,6 +1,6 @@
 import { StageView } from "@/components/stage-view";
 import { Container, Shell } from "@/components/ui";
-import { DEFAULT_EVENT_SLUG } from "@/lib/constants";
+import { DEFAULT_EVENT_SLUG, FINAL_EVENT_SLUG } from "@/lib/constants";
 import { readLeaderboardGroupsData, readPublicStateData } from "@/lib/data";
 import { stageJoinUrl } from "@/lib/utils";
 
@@ -21,6 +21,7 @@ function isUnknownEventError(error: unknown) {
 export default async function StagePage({ params }: { params: Promise<{ eventSlug: string }> }) {
   const { eventSlug } = await params;
   const slug = eventSlug || DEFAULT_EVENT_SLUG;
+  const joinUrl = stageJoinUrl(FINAL_EVENT_SLUG);
   let state;
   let groups;
   try {
@@ -34,7 +35,7 @@ export default async function StagePage({ params }: { params: Promise<{ eventSlu
           <p className="mx-auto mt-4 max-w-2xl text-lg font-bold text-white/70">
             Stage data is not available for this room. Reopen the matching operator control room before putting a QR on screen.
           </p>
-          <p className="font-mono-vota mt-6 break-all text-sm font-bold text-ember">{stageJoinUrl(slug)}</p>
+          <p className="font-mono-vota mt-6 break-all text-sm font-bold text-ember">{joinUrl}</p>
           <p className="mt-4 text-xs font-semibold text-white/45">
             {error instanceof Error ? error.message : "Unknown stage load error."}
           </p>
@@ -44,7 +45,7 @@ export default async function StagePage({ params }: { params: Promise<{ eventSlu
   }
   return (
     <StageView
-      joinUrl={stageJoinUrl(slug)}
+      joinUrl={joinUrl}
       initial={{
         ...state,
         leaderboard: groups.overall,

@@ -791,7 +791,16 @@ function ensureDefaultRoomSeeds(store: Store) {
   const seed = defaultRoomSeedStore();
   const targetSeedEvents = seed.events.filter((event) => defaultRoomSeedSlugs.has(event.slug));
   const seedEventIds = new Set(targetSeedEvents.map((event) => event.id));
-  const seedMarketIds = new Set(seed.markets.filter((market) => seedEventIds.has(market.eventId)).map((market) => market.id));
+  const deletedSeedMarketIds = new Set(
+    (store.adminAuditLogs || [])
+      .filter((log) => log.action === "delete_market" && log.entityType === "market")
+      .map((log) => log.entityId)
+  );
+  const seedMarketIds = new Set(
+    seed.markets
+      .filter((market) => seedEventIds.has(market.eventId) && !deletedSeedMarketIds.has(market.id))
+      .map((market) => market.id)
+  );
   const targetEventIdBySeedEventId = new Map<string, string>();
   let changed = false;
 
@@ -835,7 +844,11 @@ function ensureDefaultRoomSeeds(store: Store) {
     const event = store.events.find((item) => item.slug === seedEvent.slug);
     if (!event || event.featuredMarketId) continue;
     const seedFeaturedMarket = seedEvent.featuredMarketId
-      ? store.markets.find((market) => market.id === seedEvent.featuredMarketId && market.eventId === event.id)
+      ? store.markets.find((market) =>
+          market.id === seedEvent.featuredMarketId &&
+          market.eventId === event.id &&
+          !deletedSeedMarketIds.has(market.id)
+        )
       : undefined;
     if (!seedFeaturedMarket) continue;
     event.featuredMarketId = seedFeaturedMarket.id;
@@ -2165,6 +2178,74 @@ export function transitionMarket(store: Store, marketId: string, action: "open" 
   return market;
 }
 
+export function deleteMarket(store: Store, marketId: string, auditIp?: string) {
+  const market = store.markets.find((item) => item.id === marketId);
+  if (!market) throw new Error("Market not found.");
+  const event = store.events.find((item) => item.id === market.eventId);
+  const marketLedgerEntries = store.ledgerEntries.filter((entry) => entry.marketId === market.id);
+  const affectedParticipantIds = new Set<string>([
+    ...store.positions.filter((position) => position.marketId === market.id).map((position) => position.participantId),
+    ...marketLedgerEntries.map((entry) => entry.participantId)
+  ]);
+  const balanceDeltas = new Map<string, number>();
+  for (const entry of marketLedgerEntries) {
+    const balanceEffect =
+      entry.direction === "debit"
+        ? -Math.abs(entry.amountCredits)
+        : entry.direction === "credit"
+          ? Math.abs(entry.amountCredits)
+          : entry.amountCredits;
+    balanceDeltas.set(entry.participantId, (balanceDeltas.get(entry.participantId) || 0) - balanceEffect);
+  }
+  for (const [participantId, delta] of balanceDeltas) {
+    const wallet = store.wallets.find((item) => item.participantId === participantId);
+    if (!wallet) throw new Error("Wallet not found.");
+    if (wallet.balanceCredits + delta < 0) {
+      throw new Error("Cannot delete this market because reversing its ledger would overdraw a wallet.");
+    }
+  }
+  for (const [participantId, delta] of balanceDeltas) {
+    const wallet = store.wallets.find((item) => item.participantId === participantId);
+    if (wallet) wallet.balanceCredits += delta;
+  }
+
+  if (event) refreshFeaturedMarketAfterRemoval(store, event, market.id);
+  store.agentRuns = store.agentRuns.filter((run) => run.marketId !== market.id);
+  store.predictionActions = store.predictionActions.filter((action) => action.marketId !== market.id);
+  store.ledgerEntries = store.ledgerEntries.filter((entry) => entry.marketId !== market.id);
+  store.positions = store.positions.filter((position) => position.marketId !== market.id);
+  store.marketAggregates = store.marketAggregates.filter((aggregate) => aggregate.marketId !== market.id);
+  store.outcomes = store.outcomes.filter((outcome) => outcome.marketId !== market.id);
+  store.markets = store.markets.filter((item) => item.id !== market.id);
+
+  for (const participantId of affectedParticipantIds) {
+    const wallet = store.wallets.find((item) => item.participantId === participantId);
+    if (!wallet) continue;
+    wallet.totalCommittedCredits = store.positions
+      .filter((position) => {
+        if (position.participantId !== participantId) return false;
+        const positionMarket = store.markets.find((item) => item.id === position.marketId);
+        return positionMarket?.status === "open" || positionMarket?.status === "locked";
+      })
+      .reduce((sum, position) => sum + position.rawCredits, 0);
+  }
+  recomputeOracleScores(store);
+  createAuditLog(store, {
+    action: "delete_market",
+    entityType: "market",
+    entityId: market.id,
+    details: {
+      title: market.title,
+      eventId: market.eventId,
+      status: market.status,
+      participantsAffected: affectedParticipantIds.size,
+      ledgersDeleted: marketLedgerEntries.length
+    },
+    ip: auditIp
+  });
+  return market;
+}
+
 function stampClosingStageSignals(store: Store, marketId: string) {
   const snapshots = signalSnapshots(store, marketId);
   for (const action of store.predictionActions) {
@@ -2376,7 +2457,9 @@ export function recomputeOracleScores(store: Store, changedMarketId?: string) {
       }
     }
   }
-  if (changedMarketId) recomputeMarketAggregate(store, changedMarketId);
+  if (changedMarketId && store.markets.some((market) => market.id === changedMarketId)) {
+    recomputeMarketAggregate(store, changedMarketId);
+  }
 }
 
 function scoreableCorrectActionsForParticipant(store: Store, participantId: string) {

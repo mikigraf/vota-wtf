@@ -98,6 +98,29 @@ export default async function EditMarketPage({
             </p>
           )}
         </Card>
+        <Card className="border-danger bg-danger/10">
+          <h2 className="text-xl font-black text-danger">Danger zone</h2>
+          <p className="mt-2 max-w-2xl text-sm font-bold text-muted">
+            Permanently delete this market, its outcomes, positions, prediction actions, agent runs, market aggregates, and market ledger entries.
+            Market ledger effects are reversed before the records are removed.
+          </p>
+          <form action={`/api/admin/markets/${market.id}/delete`} method="post" className="mt-4 flex flex-wrap items-center gap-2">
+            <input
+              aria-label="Type DELETE to confirm"
+              className="focus-ring h-11 w-32 rounded-full border border-danger/40 bg-white px-3 text-center text-sm font-black uppercase text-ink"
+              name="confirmDelete"
+              placeholder="DELETE"
+              autoComplete="off"
+            />
+            <ConfirmSubmitButton
+              data-testid={`admin-market-delete-${market.id}`}
+              danger
+              message="Permanently delete this market and all market-scoped data?"
+            >
+              Delete permanently
+            </ConfirmSubmitButton>
+          </form>
+        </Card>
       </Container>
     </Shell>
   );

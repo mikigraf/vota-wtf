@@ -50,12 +50,14 @@ const privateAggregatesMigration = fs.readFileSync("supabase/migrations/046_priv
 const platformProvisionMigration = fs.readFileSync("supabase/migrations/047_platform_provision_account.sql", "utf8");
 const hotPathIndexMigration = fs.readFileSync("supabase/migrations/048_hot_path_indexes.sql", "utf8");
 const megathonFinalsSeedMigration = fs.readFileSync("supabase/migrations/049_seed_megathon_finals_event.sql", "utf8");
+const adminMarketDeleteMigration = fs.readFileSync("supabase/migrations/050_admin_market_delete_tx.sql", "utf8");
 const constantsLayer = fs.readFileSync("src/lib/constants.ts", "utf8");
 const storeLayer = fs.readFileSync("src/lib/store.ts", "utf8");
 const dataLayer = fs.readFileSync("src/lib/data.ts", "utf8");
 const typeLayer = fs.readFileSync("src/lib/types.ts", "utf8");
 const marketForm = fs.readFileSync("components/market-form.tsx", "utf8");
 const marketUpdateRoute = fs.readFileSync("app/api/admin/markets/[id]/route.ts", "utf8");
+const marketDeleteRoute = fs.readFileSync("app/api/admin/markets/[id]/delete/route.ts", "utf8");
 const marketCreateRoute = fs.readFileSync("app/api/admin/markets/route.ts", "utf8");
 const newMarketPage = fs.readFileSync("app/admin/markets/new/page.tsx", "utf8");
 const rootPage = fs.readFileSync("app/page.tsx", "utf8");
@@ -224,7 +226,8 @@ test("Supabase public grants stay limited to public aggregate state", () => {
   assert.match(stagePage, /function isUnknownEventError\(error: unknown\)/);
   assert.doesNotMatch(stagePage, /loadStageData\(DEFAULT_EVENT_SLUG\)/);
   assert.match(stagePage, /Stage room not found/);
-  assert.match(stagePage, /stageJoinUrl\(slug\)/);
+  assert.match(stagePage, /FINAL_EVENT_SLUG/);
+  assert.match(stagePage, /stageJoinUrl\(FINAL_EVENT_SLUG\)/);
   assert.doesNotMatch(stagePage, /recoverySlug/);
   assert.doesNotMatch(stagePage, /roleWinners|readDataStore|readPublicEventStoreData|leaderboardGroups\(|roleWinnerLabel/);
   assert.match(publicLeaderboardRoute, /readLeaderboardGroupsData\(eventSlug\)/);
@@ -762,17 +765,30 @@ test("Supabase migrations do not rely on brittle function text patching", () => 
 test("Supabase admin market create and edit flows are transactional", () => {
   assert.match(adminMarketCrudMigration, /create or replace function create_market_tx\(/);
   assert.match(adminMarketCrudMigration, /create or replace function update_market_tx\(/);
+  assert.match(adminMarketDeleteMigration, /create or replace function delete_market_tx\(p_market_id uuid, p_ip text default null\)/);
   assert.match(adminMarketCrudMigration, /perform pg_advisory_xact_lock\(724118991042\)/);
+  assert.match(adminMarketDeleteMigration, /perform pg_advisory_xact_lock\(724118991042\)/);
   assert.match(adminMarketCrudMigration, /select \* into v_market from markets where id = p_market_id for update/);
+  assert.match(adminMarketDeleteMigration, /select \* into v_market[\s\S]+from markets[\s\S]+where id = p_market_id[\s\S]+for update/);
   assert.match(adminMarketCrudMigration, /Market changed since this form loaded/);
   assert.match(adminMarketCrudMigration, /delete from outcomes where market_id = v_market\.id/);
+  assert.match(adminMarketDeleteMigration, /delete from prediction_actions where market_id = p_market_id/);
+  assert.match(adminMarketDeleteMigration, /delete from ledger_entries where market_id = p_market_id/);
+  assert.match(adminMarketDeleteMigration, /delete from positions where market_id = p_market_id/);
+  assert.match(adminMarketDeleteMigration, /delete from outcomes where market_id = p_market_id/);
+  assert.match(adminMarketDeleteMigration, /delete from markets where id = p_market_id/);
+  assert.match(adminMarketDeleteMigration, /Cannot delete this market because reversing its ledger would overdraw a wallet/);
   assert.match(adminMarketCrudMigration, /perform recompute_market_aggregate\(v_market\.id\)/);
+  assert.match(adminMarketDeleteMigration, /perform recompute_oracle_scores_tx\(\)/);
   assert.match(adminMarketCrudMigration, /values \('create_market', 'market'/);
   assert.match(adminMarketCrudMigration, /values \('update_market', 'market'/);
+  assert.match(adminMarketDeleteMigration, /'delete_market'/);
   assert.match(adminMarketCrudMigration, /revoke execute on function create_market_tx[\s\S]+from public, anon, authenticated;/);
   assert.match(adminMarketCrudMigration, /revoke execute on function update_market_tx[\s\S]+from public, anon, authenticated;/);
+  assert.match(adminMarketDeleteMigration, /revoke execute on function delete_market_tx\(uuid, text\) from public, anon, authenticated;/);
   assert.match(adminMarketCrudMigration, /grant execute on function create_market_tx[\s\S]+to service_role/);
   assert.match(adminMarketCrudMigration, /grant execute on function update_market_tx[\s\S]+to service_role/);
+  assert.match(adminMarketDeleteMigration, /grant execute on function delete_market_tx\(uuid, text\) to service_role/);
   assert.match(blindLaunchClearMigration, /p_clear_blind_launch_ended_at boolean default false/);
   assert.match(blindLaunchClearMigration, /when p_clear_blind_launch_ended_at then null/);
   assert.match(blindLaunchClearMigration, /grant execute on function update_market_tx\(uuid, timestamptz[\s\S]+boolean, text\) to service_role/);
@@ -785,6 +801,8 @@ test("Supabase admin market create and edit flows are transactional", () => {
   assert.match(dataLayer, /rpc<Row>\("create_market_tx"/);
   assert.match(dataLayer, /export async function updateMarketData/);
   assert.match(dataLayer, /rpc<Row>\("update_market_tx"/);
+  assert.match(dataLayer, /export async function deleteMarketData/);
+  assert.match(dataLayer, /rpc\("delete_market_tx"/);
   assert.match(dataLayer, /p_clear_blind_launch_ended_at: input\.clearBlindLaunchEndedAt \|\| false/);
   assert.match(newMarketPage, /searchParams: Promise<\{ eventSlug\?: string \| string\[\]; error\?: string \| string\[\] \}>/);
   assert.match(newMarketPage, /store\.events\.some\(\(event\) => event\.slug === requestedSlug\)/);
@@ -793,8 +811,11 @@ test("Supabase admin market create and edit flows are transactional", () => {
   assert.match(marketForm, /name="eventSlug" value=\{eventSlug\}/);
   assert.match(marketCreateRoute, /createMarketData/);
   assert.match(marketUpdateRoute, /updateMarketData/);
+  assert.match(marketDeleteRoute, /deleteMarketData/);
+  assert.match(marketDeleteRoute, /confirmDelete/);
   assert.doesNotMatch(marketCreateRoute, /mutateDataStore/);
   assert.doesNotMatch(marketUpdateRoute, /mutateDataStore/);
+  assert.doesNotMatch(marketDeleteRoute, /mutateDataStore/);
 });
 
 test("Mollie payment attach and verification avoid duplicate or stale credits", () => {
@@ -960,6 +981,9 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
   assert.match(marketPage, /action="feature"[\s\S]+disabled=\{market\.status === "draft" \|\| market\.status === "voided"\}/);
   assert.match(marketPage, /Lock this market before resolving it/);
   assert.match(marketPage, /Market action failed/);
+  assert.match(marketPage, /Danger zone/);
+  assert.match(marketPage, /confirmDelete/);
+  assert.match(marketPage, /admin-market-delete/);
   assert.match(marketForm, /name="confirmResolution"/);
   assert.match(marketForm, /<option value="">Choose the official winner\.\.\.<\/option>/);
   assert.match(marketForm, /name="confirmOutcomeLabel"/);
@@ -972,7 +996,8 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
     "app/api/admin/markets/[id]/lock/route.ts",
     "app/api/admin/markets/[id]/open/route.ts",
     "app/api/admin/markets/[id]/resolve/route.ts",
-    "app/api/admin/markets/[id]/void/route.ts"
+    "app/api/admin/markets/[id]/void/route.ts",
+    "app/api/admin/markets/[id]/delete/route.ts"
   ]) {
     const source = fs.readFileSync(file, "utf8");
     assert.match(source, /adminActionError/);
@@ -1007,8 +1032,8 @@ test("admin market edits guard against stale stage or lifecycle forms", () => {
     stageView.indexOf('<span className="font-mono-vota text-ember">{showAgentLayer ?') <
       stageView.indexOf("{!showAgentLayer ? <StageOddsTimeline market={market} /> : null}")
   );
-  assert.match(stageView, /max-w-\[440px\]/);
-  assert.match(stageView, /max-w-\[300px\]/);
+  assert.match(stageView, /max-w-\[540px\]/);
+  assert.match(stageView, /max-w-\[360px\]/);
   assert.match(stageView, /min-h-\[100dvh\]/);
   assert.match(stageView, /h-40 w-full[\s\S]+xl:h-48/);
   assert.match(qrCodeComponent, /className = "aspect-square w-full max-w-\[280px\] bg-white"/);
@@ -1075,8 +1100,8 @@ test("public pages expose score boards and market hero imagery", () => {
   assert.match(predictionPanel, /Wallet \{user\.wallet \? mbucks\(user\.wallet\.balanceCredits\) : "Join first"\}/);
   assert.match(publicMarketPage, /initialEmergencyPaused=\{Boolean\(event\?\.emergencyPaused\)\}/);
   assert.match(publicMarketPage, /<img src=\{state\.imageUrl\}/);
-  assert.match(stageView, /max-w-\[300px\]/);
-  assert.match(stageView, /max-w-\[440px\]/);
+  assert.match(stageView, /max-w-\[360px\]/);
+  assert.match(stageView, /max-w-\[540px\]/);
   assert.match(localCheckoutPage, /100dvh/);
 });
 
@@ -1180,7 +1205,12 @@ test("admin control surfaces avoid GET writes and expose proof/control affordanc
   assert.match(storeLayer, /title: "Which testingmiki signal moves fastest\?"/);
   assert.match(dataLayer, /const eventRows = await selectRows\("events", "select=id,slug"\)/);
   assert.match(dataLayer, /const eventIdBySlug = new Map/);
-  assert.match(dataLayer, /const seededMarkets = seed\.markets\.map\(\(market\) => \(\{ \.\.\.market, eventId: remapEventId\(market\.eventId\) \}\)\)/);
+  assert.match(dataLayer, /action=eq\.delete_market&entity_type=eq\.market/);
+  assert.match(dataLayer, /const deletedSeedMarketIds = new Set/);
+  assert.match(dataLayer, /const seededMarkets = seed\.markets[\s\S]+\.filter\(\(market\) => !deletedSeedMarketIds\.has\(market\.id\)\)/);
+  assert.match(dataLayer, /const seededMarketIds = new Set\(seededMarkets\.map\(\(market\) => market\.id\)\)/);
+  assert.match(dataLayer, /seed\.outcomes\.filter\(\(outcome\) => seededMarketIds\.has\(outcome\.marketId\)\)/);
+  assert.match(dataLayer, /seed\.ledgerEntries\.filter\(\(entry\) => !entry\.marketId \|\| seededMarketIds\.has\(entry\.marketId\)\)/);
   assert.match(dataLayer, /const seededParticipants = seed\.participants\.map\(\(participant\) => \(\{ \.\.\.participant, eventId: remapEventId\(participant\.eventId\) \}\)\)/);
   assert.match(dataLayer, /slug=eq\.\$\{encodeURIComponent\(event\.slug\)\}&featured_market_id=is\.null/);
   assert.match(dataLayer, /megathonTestingmikiMarketsSeeded: true/);

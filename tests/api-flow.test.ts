@@ -25,6 +25,7 @@ import { POST as participantsPost } from "../app/api/admin/participants/route";
 import { POST as stagePost } from "../app/api/admin/stage/route";
 import { POST as resolveMarketPost } from "../app/api/admin/markets/[id]/resolve/route";
 import { POST as voidMarketPost } from "../app/api/admin/markets/[id]/void/route";
+import { POST as deleteMarketPost } from "../app/api/admin/markets/[id]/delete/route";
 import { DELETE as mcpDelete, GET as mcpGet, POST as mcpPost } from "../app/mcp/route";
 import { GET as publicReadinessGet } from "../app/api/readiness/route";
 import { adminApiCookieName, signAdminToken } from "../src/lib/auth";
@@ -1124,6 +1125,68 @@ test("admin void route requires typed confirmation before mutating market", asyn
     );
     assert.equal(confirmed.status, 303);
     assert.equal(readStore().markets.find((item) => item.id === market.id)?.status, "voided");
+  } finally {
+    if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
+    else process.env.VOTA_DATA_BACKEND = previousBackend;
+    if (previousStoreFile === undefined) delete process.env.VOTA_STORE_FILE;
+    else process.env.VOTA_STORE_FILE = previousStoreFile;
+    fs.rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("admin delete route requires typed confirmation and removes market-scoped data", async () => {
+  const previousBackend = process.env.VOTA_DATA_BACKEND;
+  const previousStoreFile = process.env.VOTA_STORE_FILE;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "vota-delete-market-"));
+  process.env.VOTA_DATA_BACKEND = "local";
+  process.env.VOTA_STORE_FILE = path.join(tempDir, "store.json");
+  try {
+    const store = createSeedStore();
+    const market = store.markets.find((item) => item.id === SEED_IDS.markets.winner);
+    assert.ok(market);
+    writeStore(store);
+
+    const missing = await deleteMarketPost(
+      request(`http://localhost/api/admin/markets/${market.id}/delete`, {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams()
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(missing.status, 303);
+    const missingLocation = new URL(missing.headers.get("location") || "");
+    assert.equal(missingLocation.pathname, `/admin/markets/${market.id}`);
+    assert.match(missingLocation.searchParams.get("error") || "", /Type DELETE/);
+    assert.ok(readStore().markets.find((item) => item.id === market.id));
+
+    const confirmed = await deleteMarketPost(
+      request(`http://localhost/api/admin/markets/${market.id}/delete`, {
+        method: "POST",
+        cookie: await adminCookieHeader(),
+        headers: {
+          accept: "text/html",
+          "content-type": "application/x-www-form-urlencoded",
+          origin: "http://localhost"
+        },
+        body: new URLSearchParams({ confirmDelete: "DELETE" })
+      }),
+      { params: Promise.resolve({ id: market.id }) }
+    );
+    assert.equal(confirmed.status, 303);
+    const confirmedLocation = new URL(confirmed.headers.get("location") || "");
+    assert.equal(confirmedLocation.pathname, "/admin/events/megathon-2026");
+    const updated = readStore();
+    assert.equal(updated.markets.some((item) => item.id === market.id), false);
+    assert.equal(updated.outcomes.some((item) => item.marketId === market.id), false);
+    assert.equal(updated.marketAggregates.some((item) => item.marketId === market.id), false);
+    assert.notEqual(updated.events.find((item) => item.slug === "megathon-2026")?.featuredMarketId, market.id);
+    assert.ok(updated.adminAuditLogs.some((item) => item.action === "delete_market" && item.entityId === market.id));
   } finally {
     if (previousBackend === undefined) delete process.env.VOTA_DATA_BACKEND;
     else process.env.VOTA_DATA_BACKEND = previousBackend;

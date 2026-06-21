@@ -11,6 +11,7 @@ import {
   createAuditLog,
   createSeedStore,
   creditPaidPurchase,
+  deleteMarket,
   getEventOrThrow,
   getSessionParticipantByGuard,
   getSessionParticipant,
@@ -853,26 +854,49 @@ async function ensureSupabaseSeeded() {
     const eventRows = await selectRows("events", "select=id,slug");
     const eventIdBySlug = new Map(eventRows.map((row) => [String(row.slug), String(row.id)]));
     const seedEventById = new Map(seed.events.map((event) => [event.id, event]));
+    const deletedSeedMarketRows = await selectRows(
+      "admin_audit_logs",
+      "select=entity_id&action=eq.delete_market&entity_type=eq.market"
+    );
+    const deletedSeedMarketIds = new Set(deletedSeedMarketRows.map((row) => String(row.entity_id)));
     const remapEventId = (eventId: string) => {
       const seedEvent = seedEventById.get(eventId);
       return seedEvent ? eventIdBySlug.get(seedEvent.slug) || eventId : eventId;
     };
-    const seededMarkets = seed.markets.map((market) => ({ ...market, eventId: remapEventId(market.eventId) }));
+    const seededMarkets = seed.markets
+      .filter((market) => !deletedSeedMarketIds.has(market.id))
+      .map((market) => ({ ...market, eventId: remapEventId(market.eventId) }));
+    const seededMarketIds = new Set(seededMarkets.map((market) => market.id));
     const seededParticipants = seed.participants.map((participant) => ({ ...participant, eventId: remapEventId(participant.eventId) }));
     const seededSessions = seed.participantSessions.map((session) => ({ ...session, eventId: remapEventId(session.eventId) }));
     const seededAgents = seed.agentProfiles.map((agent) => ({ ...agent, eventId: remapEventId(agent.eventId) }));
     await upsertRows("markets", seededMarkets.map(marketToRow), "id", true);
-    await upsertRows("outcomes", seed.outcomes.map(outcomeToRow), "id", true);
+    await upsertRows("outcomes", seed.outcomes.filter((outcome) => seededMarketIds.has(outcome.marketId)).map(outcomeToRow), "id", true);
     await upsertRows("participants", seededParticipants.map(participantToRow), "id", true);
     await upsertRows("participant_sessions", seededSessions.map(sessionToRow), "id", true);
     await upsertRows("wallets", seed.wallets.map(walletToRow), "participant_id", true);
-    await upsertRows("positions", seed.positions.map(positionToRow), "id", true);
-    await upsertRows("prediction_actions", seed.predictionActions.map(predictionActionToRow), "id", true);
-    await upsertRows("ledger_entries", seed.ledgerEntries.map(ledgerEntryToRow), "id", true);
-    await upsertRows("market_aggregates", seed.marketAggregates.map(aggregateToRow), "market_id", true);
+    await upsertRows("positions", seed.positions.filter((position) => seededMarketIds.has(position.marketId)).map(positionToRow), "id", true);
+    await upsertRows(
+      "prediction_actions",
+      seed.predictionActions.filter((action) => seededMarketIds.has(action.marketId)).map(predictionActionToRow),
+      "id",
+      true
+    );
+    await upsertRows(
+      "ledger_entries",
+      seed.ledgerEntries.filter((entry) => !entry.marketId || seededMarketIds.has(entry.marketId)).map(ledgerEntryToRow),
+      "id",
+      true
+    );
+    await upsertRows(
+      "market_aggregates",
+      seed.marketAggregates.filter((aggregate) => seededMarketIds.has(aggregate.marketId)).map(aggregateToRow),
+      "market_id",
+      true
+    );
     await upsertRows("agent_profiles", seededAgents.map(agentProfileToRow), "id", true);
     for (const event of seed.events) {
-      if (event.featuredMarketId) {
+      if (event.featuredMarketId && !deletedSeedMarketIds.has(event.featuredMarketId)) {
         await patchRows("events", `slug=eq.${encodeURIComponent(event.slug)}&featured_market_id=is.null`, { featured_market_id: event.featuredMarketId });
       }
     }
@@ -2048,6 +2072,14 @@ export async function updateStageControlsData(input: {
 export async function voidMarketData(marketId: string, auditIp?: string) {
   if (!useSupabaseStore()) return mutateStore((store) => transitionMarket(store, marketId, "void", auditIp));
   return rpc("void_market_tx", {
+    p_market_id: marketId,
+    p_ip: auditIp || null
+  });
+}
+
+export async function deleteMarketData(marketId: string, auditIp?: string) {
+  if (!useSupabaseStore()) return mutateStore((store) => deleteMarket(store, marketId, auditIp));
+  return rpc("delete_market_tx", {
     p_market_id: marketId,
     p_ip: auditIp || null
   });

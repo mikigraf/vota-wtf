@@ -32,16 +32,17 @@
   "dependencies": {
     "next": "15.1.11",
     "react": "19.0.0",
-    "react-dom": "19.0.0"
+    "react-dom": "19.0.0",
+    "reveal.js": "^6.0.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@types/node": "22.13.10",
     "@types/react": "19.0.0",
     "@types/react-dom": "19.0.0",
     "autoprefixer": "10.4.21",
     "postcss": "8.4.31",
     "tailwindcss": "3.4.17",
-    "@playwright/test": "1.56.1",
     "typescript": "5.9.2"
   },
   "packageManager": "npm@10.9.2"

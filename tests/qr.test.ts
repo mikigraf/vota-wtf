@@ -4,8 +4,8 @@ import test from "node:test";
 import { createQrCode, createQrMatrix, formatBits } from "../components/qr-code";
 
 test("stage QR renderer creates a deterministic local matrix", () => {
-  const first = createQrMatrix("https://vota.wtf/j/megathon-2026");
-  const second = createQrMatrix("https://vota.wtf/j/megathon-2026");
+  const first = createQrMatrix("https://vota.wtf/j/megathon-finals");
+  const second = createQrMatrix("https://vota.wtf/j/megathon-finals");
   assert.equal(first.length, 41);
   assert.equal(first.every((row) => row.length === 41), true);
   assert.deepEqual(first, second);
@@ -15,7 +15,7 @@ test("stage QR renderer creates a deterministic local matrix", () => {
 });
 
 test("stage QR renderer writes format bits at standard QR coordinates", () => {
-  const { matrix, mask } = createQrCode("https://vota.wtf/j/megathon-2026");
+  const { matrix, mask } = createQrCode("https://vota.wtf/j/megathon-finals");
   const bits = formatBits(mask);
   const bit = (index: number) => ((bits >>> index) & 1) !== 0;
   for (let i = 0; i <= 5; i += 1) assert.equal(matrix[i][8], bit(i));
@@ -32,10 +32,11 @@ test("stage page uses the compact join alias for deployed QR links", () => {
   const stagePage = fs.readFileSync("app/stage/[eventSlug]/page.tsx", "utf8");
   const joinAlias = fs.readFileSync("app/j/[eventSlug]/page.tsx", "utf8");
   const envExample = fs.readFileSync(".env.example", "utf8");
-  assert.match(stagePage, /stageJoinUrl\(slug\)/);
+  assert.match(stagePage, /FINAL_EVENT_SLUG/);
+  assert.match(stagePage, /stageJoinUrl\(FINAL_EVENT_SLUG\)/);
   assert.match(stagePage, /Stage room not found/);
   assert.doesNotMatch(stagePage, /loadStageData\(DEFAULT_EVENT_SLUG\)|recoverySlug|activeSlug/);
   assert.match(joinAlias, /redirect\(`\/join\/\$\{eventSlug\}`\)/);
   assert.match(envExample, /^NEXT_PUBLIC_QR_BASE_URL=https:\/\/vota\.wtf$/m);
-  assert.doesNotThrow(() => createQrMatrix("https://vota-wtf.vercel.app/j/megathon-2026"));
+  assert.doesNotThrow(() => createQrMatrix("https://vota.wtf/j/megathon-finals"));
 });
